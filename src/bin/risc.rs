@@ -1,8 +1,15 @@
 //! The `risc` binary: parse args, build the core + devices, run the frontend.
-//!
-//! Wired to the frontend in milestone 5.
 
+#[cfg(feature = "frontend")]
 fn main() {
-    eprintln!("oberon-risc-emu: frontend not yet implemented (milestone 5)");
+    if let Err(e) = oberon_risc_emu::frontend::run() {
+        eprintln!("risc: {e}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(feature = "frontend"))]
+fn main() {
+    eprintln!("risc was built without the `frontend` feature; nothing to run");
     std::process::exit(1);
 }

@@ -40,8 +40,14 @@ fn boots_to_a_live_framebuffer() {
     distinct.dedup();
     let _ = std::fs::remove_file(&tmp);
 
-    eprintln!("framebuffer: {words} words, {zeros} blank, {} distinct", distinct.len());
-    assert!(zeros < words, "framebuffer entirely blank -> nothing rendered");
+    eprintln!(
+        "framebuffer: {words} words, {zeros} blank, {} distinct",
+        distinct.len()
+    );
+    assert!(
+        zeros < words,
+        "framebuffer entirely blank -> nothing rendered"
+    );
     assert!(
         distinct.len() > 16,
         "framebuffer too uniform ({} distinct words) -> desktop did not render",
@@ -115,19 +121,26 @@ fn boot_matches_c_reference() {
 
             let s = risc.cpu_state();
             let flags = s.z as u32 | (s.n as u32) << 1 | (s.c as u32) << 2 | (s.v as u32) << 3;
-            let state = std::iter::once(s.pc)
-                .chain(s.r)
-                .chain([s.h, flags]);
+            let state = std::iter::once(s.pc).chain(s.r).chain([s.h, flags]);
             let state_hash = fnv1a(state);
 
             let (n, gfb, gstate) = BOOT_GOLDEN[ci];
-            assert_eq!(fb_hash, gfb, "frame {n}: framebuffer diverged from C reference");
-            assert_eq!(state_hash, gstate, "frame {n}: CPU state diverged from C reference");
+            assert_eq!(
+                fb_hash, gfb,
+                "frame {n}: framebuffer diverged from C reference"
+            );
+            assert_eq!(
+                state_hash, gstate,
+                "frame {n}: CPU state diverged from C reference"
+            );
             ci += 1;
         }
     }
 
     let _ = std::fs::remove_file(&tmp);
     assert_eq!(ci, BOOT_GOLDEN.len(), "did not reach all checkpoints");
-    eprintln!("boot matches C reference at all {} checkpoints", BOOT_GOLDEN.len());
+    eprintln!(
+        "boot matches C reference at all {} checkpoints",
+        BOOT_GOLDEN.len()
+    );
 }

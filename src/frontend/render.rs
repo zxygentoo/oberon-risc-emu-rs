@@ -39,7 +39,13 @@ pub fn scale_display(win_w: u32, win_h: u32, oberon_w: u32, oberon_h: u32) -> Di
     };
     let w = (oberon_w as f64 * scale).ceil() as i32;
     let h = (oberon_h as f64 * scale).ceil() as i32;
-    DisplayRect { w, h, x: (win_w as i32 - w) / 2, y: (win_h as i32 - h) / 2, scale }
+    DisplayRect {
+        w,
+        h,
+        x: (win_w as i32 - w) / 2,
+        y: (win_h as i32 - h) / 2,
+        scale,
+    }
 }
 
 /// Refresh the persistent native-resolution `texture` from the framebuffer's

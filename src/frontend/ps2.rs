@@ -143,7 +143,11 @@ fn lookup(key: KeyCode) -> Option<(u8, KType)> {
 /// Encode a key make (`true`) / break (`false`) into PS/2 set-2 bytes (port of
 /// `ps2_encode`). Returns the buffer and the number of valid bytes; `0` means
 /// "emit nothing".
-pub fn encode(key: PhysicalKey, make: bool, mods: ModifiersState) -> ([u8; MAX_PS2_CODE_LEN], usize) {
+pub fn encode(
+    key: PhysicalKey,
+    make: bool,
+    mods: ModifiersState,
+) -> ([u8; MAX_PS2_CODE_LEN], usize) {
     let mut out = [0u8; MAX_PS2_CODE_LEN];
     let mut i = 0;
     macro_rules! push {
@@ -246,7 +250,10 @@ mod tests {
     fn numlock_hack() {
         let m = ModifiersState::empty();
         assert_eq!(enc(KeyCode::ArrowUp, true, m), vec![0xE0, 0x12, 0xE0, 0x75]);
-        assert_eq!(enc(KeyCode::ArrowUp, false, m), vec![0xE0, 0xF0, 0x75, 0xE0, 0xF0, 0x12]);
+        assert_eq!(
+            enc(KeyCode::ArrowUp, false, m),
+            vec![0xE0, 0xF0, 0x75, 0xE0, 0xF0, 0x12]
+        );
     }
 
     #[test]
@@ -254,15 +261,25 @@ mod tests {
         let none = ModifiersState::empty();
         assert_eq!(enc(KeyCode::NumpadDivide, true, none), vec![0xE0, 0x4A]);
         let shift = ModifiersState::SHIFT;
-        assert_eq!(enc(KeyCode::NumpadDivide, true, shift), vec![0xE0, 0xF0, 0x12, 0xE0, 0x4A]);
-        assert_eq!(enc(KeyCode::NumpadDivide, false, shift), vec![0xE0, 0xF0, 0x4A, 0xE0, 0x12]);
+        assert_eq!(
+            enc(KeyCode::NumpadDivide, true, shift),
+            vec![0xE0, 0xF0, 0x12, 0xE0, 0x4A]
+        );
+        assert_eq!(
+            enc(KeyCode::NumpadDivide, false, shift),
+            vec![0xE0, 0xF0, 0x4A, 0xE0, 0x12]
+        );
     }
 
     #[test]
     fn unmapped_keys_emit_nothing() {
         let m = ModifiersState::empty();
         assert_eq!(enc(KeyCode::Pause, true, m), Vec::<u8>::new());
-        let (_, n) = encode(PhysicalKey::Unidentified(NativeKeyCode::Unidentified), true, m);
+        let (_, n) = encode(
+            PhysicalKey::Unidentified(NativeKeyCode::Unidentified),
+            true,
+            m,
+        );
         assert_eq!(n, 0);
     }
 }

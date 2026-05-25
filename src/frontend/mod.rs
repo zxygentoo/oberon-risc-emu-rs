@@ -34,13 +34,17 @@ type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// `risc` binary.
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     use clap::Parser;
-    let cfg = cli::Cli::parse().into_config().map_err(std::io::Error::other)?;
+    let cfg = cli::Cli::parse()
+        .into_config()
+        .map_err(std::io::Error::other)?;
 
     let mut risc = Box::new(Risc::new());
 
     // Default devices, as the C frontend wires them: PCLink serial + clipboard.
     risc.set_serial(Box::new(PcLink::new()));
-    risc.set_clipboard(Box::new(ClipboardBridge::new(Box::new(ArboardClipboard::new()))));
+    risc.set_clipboard(Box::new(ClipboardBridge::new(Box::new(
+        ArboardClipboard::new(),
+    ))));
 
     if cfg.configure {
         risc.configure_memory(cfg.mem, cfg.width as i32, cfg.height as i32);
@@ -86,7 +90,11 @@ impl Led for LedLogger {
     fn write(&mut self, value: u32) {
         let mut s = String::from("LEDs: ");
         for i in (0..8).rev() {
-            s.push(if value & (1 << i) != 0 { (b'0' + i) as char } else { '-' });
+            s.push(if value & (1 << i) != 0 {
+                (b'0' + i) as char
+            } else {
+                '-'
+            });
         }
         println!("{s}");
     }
@@ -134,7 +142,13 @@ impl App {
             surface: None,
             win_w: tex_w as u32,
             win_h: tex_h as u32,
-            rect: render::DisplayRect { x: 0, y: 0, w: tex_w as i32, h: tex_h as i32, scale: 1.0 },
+            rect: render::DisplayRect {
+                x: 0,
+                y: 0,
+                w: tex_w as i32,
+                h: tex_h as i32,
+                scale: 1.0,
+            },
             modifiers: ModifiersState::empty(),
             mouse_offscreen: false,
             start: now,
@@ -149,14 +163,18 @@ impl App {
     }
 
     fn render(&mut self) {
-        let Some(window) = self.window.clone() else { return };
+        let Some(window) = self.window.clone() else {
+            return;
+        };
         if self.surface.is_none() {
             return;
         }
         render::blit_damage(&mut self.texture, &mut self.risc, BLACK, WHITE);
 
         let (w, h) = (self.win_w, self.win_h);
-        let (Some(nw), Some(nh)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else { return };
+        let (Some(nw), Some(nh)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
+            return;
+        };
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(nw, nh).is_err() {
             return;
@@ -165,7 +183,15 @@ impl App {
             Ok(b) => b,
             Err(_) => return,
         };
-        render::scale_into(&mut buf, w, h, &self.texture, self.tex_w, self.tex_h, self.rect);
+        render::scale_into(
+            &mut buf,
+            w,
+            h,
+            &self.texture,
+            self.tex_w,
+            self.tex_h,
+            self.rect,
+        );
         window.pre_present_notify();
         let _ = buf.present();
     }

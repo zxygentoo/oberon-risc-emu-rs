@@ -35,8 +35,16 @@ impl RawSerial {
 impl Serial for RawSerial {
     fn read_status(&mut self) -> u32 {
         let mut fds = [
-            libc::pollfd { fd: self.fd_in.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: self.fd_out.as_raw_fd(), events: libc::POLLOUT, revents: 0 },
+            libc::pollfd {
+                fd: self.fd_in.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: self.fd_out.as_raw_fd(),
+                events: libc::POLLOUT,
+                revents: 0,
+            },
         ];
         let mut status = 0;
         let r = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 0) };

@@ -54,7 +54,11 @@ impl Disk {
             // Detect a filesystem-only image, which starts directly at sector 1
             // (DiskAdr 29): read sector 0 and check the magic word.
             read_sector(Some(&mut file), &mut disk.tx_buf[0..128]);
-            disk.offset = if disk.tx_buf[0] == 0x9B1E_A38D { 0x8_0002 } else { 0 };
+            disk.offset = if disk.tx_buf[0] == 0x9B1E_A38D {
+                0x8_0002
+            } else {
+                0
+            };
             disk.file = Some(file);
         }
 
@@ -171,7 +175,12 @@ fn read_sector(file: Option<&mut File>, buf: &mut [u32]) {
         }
     }
     for (i, w) in buf.iter_mut().enumerate().take(128) {
-        *w = u32::from_le_bytes([bytes[i * 4], bytes[i * 4 + 1], bytes[i * 4 + 2], bytes[i * 4 + 3]]);
+        *w = u32::from_le_bytes([
+            bytes[i * 4],
+            bytes[i * 4 + 1],
+            bytes[i * 4 + 2],
+            bytes[i * 4 + 3],
+        ]);
     }
 }
 

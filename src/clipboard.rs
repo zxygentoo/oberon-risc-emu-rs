@@ -34,7 +34,13 @@ pub struct ClipboardBridge {
 
 impl ClipboardBridge {
     pub fn new(host: Box<dyn HostClipboard>) -> Self {
-        ClipboardBridge { host, state: State::Idle, data: Vec::new(), ptr: 0, len: 0 }
+        ClipboardBridge {
+            host,
+            state: State::Idle,
+            data: Vec::new(),
+            ptr: 0,
+            len: 0,
+        }
     }
 
     fn reset(&mut self) {
@@ -120,7 +126,9 @@ pub struct ArboardClipboard {
 #[cfg(feature = "frontend")]
 impl ArboardClipboard {
     pub fn new() -> Self {
-        ArboardClipboard { inner: arboard::Clipboard::new().ok() }
+        ArboardClipboard {
+            inner: arboard::Clipboard::new().ok(),
+        }
     }
 }
 

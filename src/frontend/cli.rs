@@ -100,8 +100,14 @@ fn parse_size(s: &str) -> Result<(i32, i32), String> {
     let (w, h) = s
         .split_once(['x', 'X'])
         .ok_or_else(|| format!("invalid --size {s:?}, expected WIDTHxHEIGHT"))?;
-    let w = w.trim().parse::<i32>().map_err(|_| format!("invalid width in --size {s:?}"))?;
-    let h = h.trim().parse::<i32>().map_err(|_| format!("invalid height in --size {s:?}"))?;
+    let w = w
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| format!("invalid width in --size {s:?}"))?;
+    let h = h
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| format!("invalid height in --size {s:?}"))?;
     Ok((w, h))
 }
 

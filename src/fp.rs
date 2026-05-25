@@ -62,7 +62,12 @@ pub fn fp_add(x: u32, y: u32, u: bool, v: bool) -> u32 {
     let sum = (((xs as u32) << 26) | ((xs as u32) << 25) | ((x3 as u32) & 0x01FF_FFFF))
         .wrapping_add(((ys as u32) << 26) | ((ys as u32) << 25) | ((y3 as u32) & 0x01FF_FFFF));
 
-    let s = (if sum & (1 << 26) != 0 { sum.wrapping_neg() } else { sum }).wrapping_add(1)
+    let s = (if sum & (1 << 26) != 0 {
+        sum.wrapping_neg()
+    } else {
+        sum
+    })
+    .wrapping_add(1)
         & 0x07FF_FFFF;
 
     let mut e1 = e0.wrapping_add(1);

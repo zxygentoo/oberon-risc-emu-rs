@@ -40,32 +40,59 @@ fn fp_vectors_match_c_reference() {
             "A" => {
                 let (x, y, u, v) = (hex(f[1]), hex(f[2]), f[3] == "1", f[4] == "1");
                 record!(
-                    format!("L{}: fp_add({x:08X},{y:08X},{},{})", i + 1, u as u8, v as u8),
+                    format!(
+                        "L{}: fp_add({x:08X},{y:08X},{},{})",
+                        i + 1,
+                        u as u8,
+                        v as u8
+                    ),
                     fp_add(x, y, u, v),
                     hex(f[5])
                 );
             }
             "M" => {
                 let (x, y) = (hex(f[1]), hex(f[2]));
-                record!(format!("L{}: fp_mul({x:08X},{y:08X})", i + 1), fp_mul(x, y), hex(f[3]));
+                record!(
+                    format!("L{}: fp_mul({x:08X},{y:08X})", i + 1),
+                    fp_mul(x, y),
+                    hex(f[3])
+                );
             }
             "D" => {
                 let (x, y) = (hex(f[1]), hex(f[2]));
-                record!(format!("L{}: fp_div({x:08X},{y:08X})", i + 1), fp_div(x, y), hex(f[3]));
+                record!(
+                    format!("L{}: fp_div({x:08X},{y:08X})", i + 1),
+                    fp_div(x, y),
+                    hex(f[3])
+                );
             }
             "I" => {
                 let (x, y, s) = (hex(f[1]), hex(f[2]), f[3] == "1");
                 let d = idiv(x, y, s);
-                record!(format!("L{}: idiv({x:08X},{y:08X},{}).quot", i + 1, s as u8), d.quot, hex(f[4]));
-                record!(format!("L{}: idiv({x:08X},{y:08X},{}).rem", i + 1, s as u8), d.rem, hex(f[5]));
+                record!(
+                    format!("L{}: idiv({x:08X},{y:08X},{}).quot", i + 1, s as u8),
+                    d.quot,
+                    hex(f[4])
+                );
+                record!(
+                    format!("L{}: idiv({x:08X},{y:08X},{}).rem", i + 1, s as u8),
+                    d.rem,
+                    hex(f[5])
+                );
             }
             other => panic!("unknown record kind {other:?} at line {}", i + 1),
         }
     }
 
-    assert!(checks > 10_000, "expected a substantial vector set, got {checks}");
+    assert!(
+        checks > 10_000,
+        "expected a substantial vector set, got {checks}"
+    );
     if fails != 0 {
-        panic!("{fails}/{checks} FP differential checks failed:\n{}", samples.join("\n"));
+        panic!(
+            "{fails}/{checks} FP differential checks failed:\n{}",
+            samples.join("\n")
+        );
     }
     eprintln!("FP differential: {checks} checks passed");
 }
@@ -82,7 +109,11 @@ const F6_0: u32 = 0x40C0_0000; // 6.0
 fn fp_add_basic() {
     assert_eq!(fp_add(F1_0, F1_0, false, false), F2_0, "1.0 + 1.0 == 2.0");
     // FSB is fp_add with operand 2's sign flipped: 2.0 - 1.0 == 1.0.
-    assert_eq!(fp_add(F2_0, F1_0 ^ 0x8000_0000, false, false), F1_0, "2.0 - 1.0 == 1.0");
+    assert_eq!(
+        fp_add(F2_0, F1_0 ^ 0x8000_0000, false, false),
+        F1_0,
+        "2.0 - 1.0 == 1.0"
+    );
     // Adding signed zeros yields +0.
     assert_eq!(fp_add(0, 0x8000_0000, false, false), 0);
 }
@@ -93,14 +124,27 @@ fn fp_mul_div_basic() {
     assert_eq!(fp_div(F6_0, F2_0), F3_0, "6.0 / 2.0 == 3.0");
     // Divide by zero exponent -> infinity with the xor sign.
     assert_eq!(fp_div(F6_0, 0), 0x7F80_0000, "6.0 / 0 == +inf");
-    assert_eq!(fp_div(F6_0 | 0x8000_0000, 0), 0xFF80_0000, "-6.0 / 0 == -inf");
+    assert_eq!(
+        fp_div(F6_0 | 0x8000_0000, 0),
+        0xFF80_0000,
+        "-6.0 / 0 == -inf"
+    );
 }
 
 #[test]
 fn idiv_signed_floors_toward_negative_infinity() {
     // Unsigned: plain truncating division.
-    assert_eq!(idiv(7, 2, false), oberon_risc_emu::fp::IDiv { quot: 3, rem: 1 });
+    assert_eq!(
+        idiv(7, 2, false),
+        oberon_risc_emu::fp::IDiv { quot: 3, rem: 1 }
+    );
     // Signed: Oberon DIV/MOD floor toward -inf, so -7 / 2 == -4 rem 1.
     let m7 = (-7i32) as u32;
-    assert_eq!(idiv(m7, 2, true), oberon_risc_emu::fp::IDiv { quot: (-4i32) as u32, rem: 1 });
+    assert_eq!(
+        idiv(m7, 2, true),
+        oberon_risc_emu::fp::IDiv {
+            quot: (-4i32) as u32,
+            rem: 1
+        }
+    );
 }

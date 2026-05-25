@@ -125,7 +125,12 @@ impl Risc {
             clipboard: None,
             fb_width,
             fb_height,
-            damage: Damage { x1: 0, y1: 0, x2: fb_width - 1, y2: fb_height - 1 },
+            damage: Damage {
+                x1: 0,
+                y1: 0,
+                x2: fb_width - 1,
+                y2: fb_height - 1,
+            },
             ram: vec![0u32; (DEFAULT_MEM_SIZE / 4) as usize],
             rom: BOOTLOADER,
         };
@@ -142,7 +147,12 @@ impl Risc {
         self.mem_size = self.display_start + (screen_width * screen_height / 8) as u32;
         self.fb_width = screen_width / 32;
         self.fb_height = screen_height;
-        self.damage = Damage { x1: 0, y1: 0, x2: self.fb_width - 1, y2: self.fb_height - 1 };
+        self.damage = Damage {
+            x1: 0,
+            y1: 0,
+            x2: self.fb_width - 1,
+            y2: self.fb_height - 1,
+        };
 
         self.ram = vec![0u32; (self.mem_size / 4) as usize];
 
@@ -215,7 +225,10 @@ impl Risc {
         } else if self.pc >= ROM_START / 4 && self.pc < ROM_START / 4 + ROM_WORDS as u32 {
             self.rom[(self.pc - ROM_START / 4) as usize]
         } else {
-            eprintln!("Branched into the void (PC=0x{:08X}), resetting...", self.pc);
+            eprintln!(
+                "Branched into the void (PC=0x{:08X}), resetting...",
+                self.pc
+            );
             self.reset();
             return;
         };
@@ -562,7 +575,12 @@ impl Risc {
     /// `risc_get_framebuffer_damage`.
     pub fn framebuffer_damage(&mut self) -> Damage {
         let dmg = self.damage;
-        self.damage = Damage { x1: self.fb_width, x2: 0, y1: self.fb_height, y2: 0 };
+        self.damage = Damage {
+            x1: self.fb_width,
+            x2: 0,
+            y1: self.fb_height,
+            y2: 0,
+        };
         dmg
     }
 
@@ -578,7 +596,15 @@ impl Risc {
 
     /// Snapshot the architectural CPU state (for inspection / differential testing).
     pub fn cpu_state(&self) -> CpuState {
-        CpuState { pc: self.pc, r: self.r, h: self.h, z: self.z, n: self.n, c: self.c, v: self.v }
+        CpuState {
+            pc: self.pc,
+            r: self.r,
+            h: self.h,
+            z: self.z,
+            n: self.n,
+            c: self.c,
+            v: self.v,
+        }
     }
 }
 
@@ -714,7 +740,12 @@ mod tests {
 
     #[test]
     fn logical_ops() {
-        for (op, want) in [(AND, 0x0F00 & 0x00F0), (ANN, 0x0F00 & !0x00F0), (IOR, 0x0F00 | 0x00F0), (XOR, 0x0F00 ^ 0x00F0)] {
+        for (op, want) in [
+            (AND, 0x0F00 & 0x00F0),
+            (ANN, 0x0F00 & !0x00F0),
+            (IOR, 0x0F00 | 0x00F0),
+            (XOR, 0x0F00 ^ 0x00F0),
+        ] {
             let mut r = cpu();
             r.ram[0] = reg(0, 0, 0, 1, 2, op, 3);
             r.r[2] = 0x0F00;
@@ -963,7 +994,15 @@ mod tests {
         let _ = r.framebuffer_damage(); // clear initial full-screen damage
         r.store_word(DEFAULT_DISPLAY_START, 0x0000_00FF);
         let d = r.framebuffer_damage();
-        assert_eq!(d, Damage { x1: 0, x2: 0, y1: 0, y2: 0 });
+        assert_eq!(
+            d,
+            Damage {
+                x1: 0,
+                x2: 0,
+                y1: 0,
+                y2: 0
+            }
+        );
         assert_eq!(r.framebuffer()[0], 0x0000_00FF);
     }
 
@@ -1001,7 +1040,11 @@ mod tests {
         assert_eq!(r.progress, 19);
         // Enqueue scancodes.
         r.keyboard_input(&[0x1C, 0x32]);
-        assert_eq!(r.load_io(IO_START + 24) & 0x1000_0000, 0x1000_0000, "ready bit");
+        assert_eq!(
+            r.load_io(IO_START + 24) & 0x1000_0000,
+            0x1000_0000,
+            "ready bit"
+        );
         assert_eq!(r.load_io(IO_START + 28), 0x1C);
         assert_eq!(r.load_io(IO_START + 28), 0x32);
         assert_eq!(r.load_io(IO_START + 28), 0, "drained");
@@ -1011,14 +1054,20 @@ mod tests {
     fn mouse_packing_and_buttons() {
         let mut r = cpu();
         r.mouse_moved(0x123, 0x456);
-        assert_eq!(r.load_io(IO_START + 24) & 0x00FF_FFFF, (0x456 << 12) | 0x123);
+        assert_eq!(
+            r.load_io(IO_START + 24) & 0x00FF_FFFF,
+            (0x456 << 12) | 0x123
+        );
         r.mouse_button(1, true); // left -> bit 1<<(27-1)=26
         assert_eq!(r.load_io(IO_START + 24) & (1 << 26), 1 << 26);
         r.mouse_button(1, false);
         assert_eq!(r.load_io(IO_START + 24) & (1 << 26), 0);
         // Out-of-range coordinates are ignored.
         r.mouse_moved(-1, 9999);
-        assert_eq!(r.load_io(IO_START + 24) & 0x00FF_FFFF, (0x456 << 12) | 0x123);
+        assert_eq!(
+            r.load_io(IO_START + 24) & 0x00FF_FFFF,
+            (0x456 << 12) | 0x123
+        );
     }
 
     // Devices recording dispatch, observable via a shared log.

@@ -2,6 +2,8 @@
 //! input (port of `sdl-main.c`).
 
 mod cli;
+mod input;
+mod ps2;
 mod render;
 
 use std::num::NonZeroU32;
@@ -12,6 +14,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::disk::Disk;
@@ -83,6 +86,9 @@ struct App {
     rect: render::DisplayRect,
     fullscreen: bool,
 
+    modifiers: ModifiersState,
+    mouse_offscreen: bool,
+
     start: Instant,
     next_frame: Instant,
 }
@@ -105,6 +111,8 @@ impl App {
             win_w: tex_w as u32,
             win_h: tex_h as u32,
             rect: render::DisplayRect { x: 0, y: 0, w: tex_w as i32, h: tex_h as i32, scale: 1.0 },
+            modifiers: ModifiersState::empty(),
+            mouse_offscreen: false,
             start: now,
             next_frame: now,
         }
@@ -136,6 +144,13 @@ impl App {
         render::scale_into(&mut buf, w, h, &self.texture, self.tex_w, self.tex_h, self.rect);
         window.pre_present_notify();
         let _ = buf.present();
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        self.fullscreen = !self.fullscreen;
+        if let Some(window) = &self.window {
+            window.set_fullscreen(self.fullscreen.then(|| Fullscreen::Borderless(None)));
+        }
     }
 }
 
@@ -216,8 +231,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => self.reconfigure(size.width.max(1), size.height.max(1)),
             WindowEvent::RedrawRequested => self.render(),
-            // Input handling lands in milestone 6.
-            _ => {}
+            other => input::handle(self, event_loop, other),
         }
     }
 

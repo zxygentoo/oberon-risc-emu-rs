@@ -1,0 +1,33 @@
+[package]
+name = "oberon-risc-emu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A Rust port of Peter De Wachter's Project Oberon RISC5 emulator"
+readme = "README.md"
+default-run = "risc"
+
+[lib]
+name = "oberon_risc_emu"
+path = "src/lib.rs"
+
+[[bin]]
+name = "risc"
+path = "src/bin/risc.rs"
+
+[features]
+default = ["frontend"]
+# The GUI stack. `cargo test --no-default-features` builds the pure core alone
+# (fast, no windowing/clipboard system libs) for headless CI.
+frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap"]
+# Differential co-simulation against the C reference (compiles risc.c via a
+# `cc` build-dependency and links it for FFI). Opt-in; needs a C toolchain and
+# the sibling C repo. Wired in a later milestone; see build.rs and tests/cosim.rs.
+cosim = []
+
+[dependencies]
+# Pinned as a known-good trio: winit 0.30 + softbuffer 0.4 share raw-window-handle 0.6.
+winit = { version = "0.30", optional = true }
+softbuffer = { version = "0.4", optional = true }
+arboard = { version = "3", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }

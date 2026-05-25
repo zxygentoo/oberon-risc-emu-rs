@@ -17,9 +17,11 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
+use crate::clipboard::{ArboardClipboard, ClipboardBridge};
 use crate::disk::Disk;
 use crate::io::Led;
 use crate::risc::Risc;
+use crate::serial::pclink::PcLink;
 use render::{BLACK, WHITE};
 
 const CPU_HZ: u32 = 25_000_000;
@@ -35,6 +37,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = cli::Cli::parse().into_config().map_err(std::io::Error::other)?;
 
     let mut risc = Box::new(Risc::new());
+
+    // Default devices, as the C frontend wires them: PCLink serial + clipboard.
+    risc.set_serial(Box::new(PcLink::new()));
+    risc.set_clipboard(Box::new(ClipboardBridge::new(Box::new(ArboardClipboard::new()))));
+
     if cfg.configure {
         risc.configure_memory(cfg.mem, cfg.width as i32, cfg.height as i32);
     }
@@ -46,9 +53,26 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // The disk is the SPI slave at index 1; a diskless card allows
-    // --boot-from-serial. (PCLink serial + clipboard are wired in milestone 8.)
+    // --boot-from-serial.
     let disk = Disk::new(cfg.disk_image.as_deref())?;
     risc.set_spi(1, Box::new(disk));
+
+    // --serial-in/--serial-out replace PCLink with a raw host serial line.
+    if cfg.serial_in.is_some() || cfg.serial_out.is_some() {
+        #[cfg(unix)]
+        {
+            use std::path::Path;
+            let in_path = cfg.serial_in.as_deref().unwrap_or("/dev/null");
+            let out_path = cfg.serial_out.as_deref().unwrap_or("/dev/null");
+            let serial =
+                crate::serial::raw_serial::RawSerial::new(Path::new(in_path), Path::new(out_path))?;
+            risc.set_serial(Box::new(serial));
+        }
+        #[cfg(not(unix))]
+        {
+            return Err("--serial-in/--serial-out are only supported on unix".into());
+        }
+    }
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(risc, cfg);

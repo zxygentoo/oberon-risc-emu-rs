@@ -1,3 +1,6 @@
 //! Serial-line devices: PCLink file transfer and raw host serial.
-//!
-//! Implemented in milestone 8.
+
+pub mod pclink;
+
+#[cfg(unix)]
+pub mod raw_serial;

@@ -48,9 +48,6 @@ pub struct Cli {
 }
 
 /// Validated configuration handed to the frontend.
-//
-// `serial_in`/`serial_out` are consumed once raw serial lands (milestone 8).
-#[allow(dead_code)]
 pub struct Config {
     pub width: u32,
     pub height: u32,

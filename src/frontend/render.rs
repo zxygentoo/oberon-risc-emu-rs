@@ -1,11 +1,12 @@
 //! Framebuffer rendering: 1-bit -> ARGB expansion with damage tracking, plus a
-//! nearest-neighbour scale into the window (port of `update_texture` and
-//! `scale_display` from `sdl-main.c`).
+//! bilinear scale into the window (port of `update_texture` and `scale_display`
+//! from `sdl-main.c`).
 //!
-//! Phase-1 strategy (per the plan): keep a persistent native-resolution `u32`
-//! texture (the SDL streaming-texture analog), refresh only the damaged words
-//! into it, then nearest-neighbour scale the whole texture into the softbuffer
-//! surface every present.
+//! Strategy (per the plan): keep a persistent native-resolution `u32` texture
+//! (the SDL streaming-texture analog), refresh only the damaged words into it,
+//! then scale the whole texture into the softbuffer surface every present. The
+//! scale is bilinear to match the linear filtering SDL uses (`"best"` scale
+//! quality), which looks far smoother than nearest-neighbour on the 1-bit text.
 
 use crate::risc::Risc;
 
@@ -75,8 +76,10 @@ pub fn blit_damage(texture: &mut [u32], risc: &mut Risc, black: u32, white: u32)
     }
 }
 
-/// Nearest-neighbour scale the whole `texture` into the window-sized `out`
-/// buffer, letterboxing the surrounding border.
+/// Bilinearly scale the whole `texture` into the window-sized `out` buffer,
+/// letterboxing the surrounding border. This matches the linear ("best")
+/// filtering the C frontend asks SDL for, which is far gentler on the eye than
+/// nearest-neighbour for the 1-bit display.
 pub fn scale_into(
     out: &mut [u32],
     win_w: u32,
@@ -89,15 +92,17 @@ pub fn scale_into(
     let inv = 1.0 / rect.scale;
     let win_w = win_w as usize;
 
-    // Precompute the source column for each window column once.
-    let col_tx: Vec<Option<usize>> = (0..win_w as i32)
+    // Per window column: the two source columns and the horizontal blend weight
+    // (0..256 fixed point), or None outside the display rect. Computed once.
+    let cols: Vec<Option<(usize, usize, u32)>> = (0..win_w as i32)
         .map(|sx| {
-            if sx >= rect.x && sx < rect.x + rect.w {
-                let tx = ((sx - rect.x) as f64 * inv) as usize;
-                (tx < tex_w).then_some(tx)
-            } else {
-                None
+            if sx < rect.x || sx >= rect.x + rect.w {
+                return None;
             }
+            let fx = (sx - rect.x) as f64 * inv;
+            let x0 = (fx as usize).min(tex_w - 1);
+            let x1 = (x0 + 1).min(tex_w - 1);
+            Some((x0, x1, ((fx - x0 as f64) * 256.0) as u32))
         })
         .collect();
 
@@ -107,19 +112,38 @@ pub fn scale_into(
             out_row.fill(BORDER);
             continue;
         }
-        let ty = ((sy - rect.y) as f64 * inv) as usize;
-        if ty >= tex_h {
-            out_row.fill(BORDER);
-            continue;
-        }
-        let tex_row = &texture[ty * tex_w..ty * tex_w + tex_w];
-        for (px, tx) in out_row.iter_mut().zip(&col_tx) {
-            *px = match tx {
-                Some(tx) => tex_row[*tx],
+        let fy = (sy - rect.y) as f64 * inv;
+        let y0 = (fy as usize).min(tex_h - 1);
+        let y1 = (y0 + 1).min(tex_h - 1);
+        let wy = ((fy - y0 as f64) * 256.0) as u32;
+        let row0 = &texture[y0 * tex_w..y0 * tex_w + tex_w];
+        let row1 = &texture[y1 * tex_w..y1 * tex_w + tex_w];
+
+        for (px, col) in out_row.iter_mut().zip(&cols) {
+            *px = match *col {
+                Some((x0, x1, wx)) => {
+                    let top = lerp(row0[x0], row0[x1], wx);
+                    let bot = lerp(row1[x0], row1[x1], wx);
+                    lerp(top, bot, wy)
+                }
                 None => BORDER,
             };
         }
     }
+}
+
+/// Linearly interpolate the three 8-bit channels of two `0x00RRGGBB` pixels;
+/// `t` is a 0..=256 fixed-point weight (`a` at 0, `b` at 256).
+#[inline]
+fn lerp(a: u32, b: u32, t: u32) -> u32 {
+    let s = 256 - t;
+    let mut out = 0;
+    for shift in [0u32, 8, 16] {
+        let ca = (a >> shift) & 0xFF;
+        let cb = (b >> shift) & 0xFF;
+        out |= ((ca * s + cb * t) >> 8) << shift;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -144,7 +168,9 @@ mod tests {
     }
 
     #[test]
-    fn scale_into_1x_copies_and_borders() {
+    fn scale_into_1x_is_an_exact_copy() {
+        // At integer source positions the blend weights are zero, so 1x scaling
+        // reproduces the texture exactly.
         let tex_w = 4;
         let tex_h = 2;
         let texture = vec![1, 2, 3, 4, 5, 6, 7, 8];
@@ -154,11 +180,31 @@ mod tests {
         assert_eq!((rect.scale, rect.x, rect.w), (1.0, 1, 4));
         let mut out = vec![0xDEADu32; (win_w * win_h) as usize];
         scale_into(&mut out, win_w, win_h, &texture, tex_w, tex_h, rect);
-        // Row 0: border, tex row0 (1..4), border.
         assert_eq!(out[0], BORDER);
         assert_eq!(&out[1..5], &[1, 2, 3, 4]);
         assert_eq!(out[5], BORDER);
-        // Row 1: tex row1 (5..8).
         assert_eq!(&out[7..11], &[5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn scale_into_2x_blends_between_pixels() {
+        // Two horizontal texels (black, blue=255) scaled 2x: the in-between
+        // output column is their average.
+        let texture = vec![0x0000_0000u32, 0x0000_00FF];
+        let (win_w, win_h) = (4u32, 2u32);
+        let rect = scale_display(win_w, win_h, 2, 1);
+        assert_eq!((rect.scale, rect.x, rect.w), (2.0, 0, 4));
+        let mut out = vec![0u32; (win_w * win_h) as usize];
+        scale_into(&mut out, win_w, win_h, &texture, 2, 1, rect);
+        assert_eq!(out[0], 0x0000_0000); // exact first texel
+        assert_eq!(out[1], 0x0000_007F); // midpoint: 255/2 ~= 127
+        assert_eq!(out[2], 0x0000_00FF); // exact second texel
+    }
+
+    #[test]
+    fn lerp_endpoints_and_midpoint() {
+        assert_eq!(lerp(0x00_00_00, 0x10_20_40, 0), 0x00_00_00); // t=0 -> a
+        assert_eq!(lerp(0x00_00_00, 0x10_20_40, 256), 0x10_20_40); // t=256 -> b
+        assert_eq!(lerp(0, 0xFF_FF_FF, 128), 0x7F_7F_7F); // half
     }
 }

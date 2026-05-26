@@ -5,7 +5,7 @@ mod cli;
 mod clipboard;
 mod input;
 mod ps2;
-mod render;
+pub mod render;
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -155,6 +155,14 @@ struct App {
     tex_h: usize,
     texture: Vec<u32>,
 
+    // Persistent window-sized scaled image. Each frame only the damaged span is
+    // re-scaled into it (the rest carries over), then the whole buffer is copied
+    // to the surface — softbuffer's surface buffer isn't guaranteed to persist
+    // between presents. `full_repaint` forces a whole-window rescale (initial +
+    // resize, when the scale factor changes).
+    scaled: Vec<u32>,
+    full_repaint: bool,
+
     window: Option<Rc<Window>>,
     // Held for the surface's display connection; never read after construction.
     #[allow(dead_code)]
@@ -183,6 +191,8 @@ impl App {
             tex_w,
             tex_h,
             texture: vec![BLACK; tex_w * tex_h],
+            scaled: vec![BLACK; tex_w * tex_h],
+            full_repaint: true,
             risc,
             cfg,
             window: None,
@@ -208,6 +218,9 @@ impl App {
         self.win_w = w;
         self.win_h = h;
         self.rect = render::scale_display(w, h, self.tex_w as u32, self.tex_h as u32);
+        // The scale factor changed, so the whole window must be re-scaled.
+        self.scaled = vec![BLACK; (w * h) as usize];
+        self.full_repaint = true;
     }
 
     fn render(&mut self) {
@@ -217,10 +230,40 @@ impl App {
         if self.surface.is_none() {
             return;
         }
-        render::blit_damage(&mut self.texture, &mut self.risc, BLACK, WHITE);
 
-        let (w, h) = (self.win_w, self.win_h);
-        let (Some(nw), Some(nh)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
+        // Refresh the native texture from framebuffer damage, then re-scale only
+        // the affected window span into the persistent buffer (everything, on the
+        // first frame or after a resize).
+        let dirty = render::blit_damage(&mut self.texture, &mut self.risc, BLACK, WHITE);
+        if self.full_repaint {
+            render::scale_into(
+                &mut self.scaled,
+                self.win_w,
+                self.win_h,
+                &self.texture,
+                self.tex_w,
+                self.tex_h,
+                self.rect,
+            );
+            self.full_repaint = false;
+        } else if let Some(tex_rect) = dirty {
+            let wd = render::window_dirty(tex_rect, self.rect, self.win_w, self.win_h);
+            render::scale_region(
+                &mut self.scaled,
+                self.win_w,
+                self.win_h,
+                &self.texture,
+                self.tex_w,
+                self.tex_h,
+                self.rect,
+                wd,
+            );
+        }
+
+        // Copy the persistent image into the surface buffer (its prior contents
+        // are not guaranteed) and present.
+        let (Some(nw), Some(nh)) = (NonZeroU32::new(self.win_w), NonZeroU32::new(self.win_h))
+        else {
             return;
         };
         let surface = self.surface.as_mut().unwrap();
@@ -230,15 +273,9 @@ impl App {
         let Ok(mut buf) = surface.buffer_mut() else {
             return;
         };
-        render::scale_into(
-            &mut buf,
-            w,
-            h,
-            &self.texture,
-            self.tex_w,
-            self.tex_h,
-            self.rect,
-        );
+        if buf.len() == self.scaled.len() {
+            buf.copy_from_slice(&self.scaled);
+        }
         window.pre_present_notify();
         let _ = buf.present();
     }

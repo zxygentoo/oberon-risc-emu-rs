@@ -41,12 +41,11 @@ cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 `risc [OPTIONS] DISK-IMAGE` (i.e. `cargo run --release -- [OPTIONS] DISK-IMAGE`):
 
 - `--fullscreen` — start in fullscreen.
-- `--zoom REAL` — scale the windowed display (default: auto 2× on large monitors).
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
-- `--boot-from-serial` — boot over the serial line; no disk image needed.
-- `--serial-in FILE` / `--serial-out FILE` — wire the serial line to files (Unix only).
+
+`risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
 
 ## Transferring files
 

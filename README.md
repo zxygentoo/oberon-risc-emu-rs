@@ -22,6 +22,11 @@ cargo build --release      # whole workspace
 cargo build -p risc-core   # core alone, no GUI/system libs
 ```
 
+The release build produces the emulator binary at `target/release/risc`. The
+examples below invoke it with `cargo run --release -- …`; once built you can run
+`target/release/risc …` directly (or `cargo install --path .` to put `risc` on
+your `PATH`).
+
 ## Run
 
 A disk image is bundled under [`DiskImage/`](DiskImage):
@@ -38,14 +43,14 @@ cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 
 ## Command line options
 
-`risc [OPTIONS] DISK-IMAGE` (i.e. `cargo run --release -- [OPTIONS] DISK-IMAGE`):
+`cargo run --release -- [OPTIONS] DISK-IMAGE` (or `target/release/risc [OPTIONS] DISK-IMAGE`):
 
 - `--fullscreen` — start in fullscreen.
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
 
-`risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
+`cargo run --release -- --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
 
 ## Transferring files
 
@@ -107,9 +112,9 @@ render hot path has a `cargo bench` microbenchmark.
 
 ### Headless boots
 
-`risc headless` runs the core on the same deterministic 60 Hz clock as the boot
-golden — windowless and byte-for-byte reproducible — so it's handy for CI smoke
-checks and for regenerating golden hashes:
+The `headless` subcommand runs the core on the same deterministic 60 Hz clock as
+the boot golden — windowless and byte-for-byte reproducible — so it's handy for
+CI smoke checks and for regenerating golden hashes:
 
 ```sh
 # run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes

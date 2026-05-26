@@ -91,9 +91,23 @@ fn single_instruction_matches_c() {
     let mut rs = Risc::new();
     let mut rng = Rng::new(0x1234_5678_9ABC_DEF0);
     let n = iters("COSIM_INSN_ITERS", 200_000);
+    let mut skipped = 0u32;
 
     for _ in 0..n {
         let ir = rng.u32();
+        // The one intentional divergence: MOV with q=0, u=1, v=1 reads the flags
+        // byte, where our port emits the hardware's 0x50 and the C reference
+        // emits 0xD0 (see DIVERGENCES.md / RISC5.v:139). It cannot be oracled
+        // against C, so skip it; mov_flags_read_is_hardware_0x50 guards it.
+        let is_mov_flags_read = ir & 0x8000_0000 == 0 // register class
+            && (ir >> 16) & 0xF == 0                  // MOV
+            && ir & 0x4000_0000 == 0                  // q = 0
+            && ir & 0x2000_0000 != 0                  // u = 1
+            && ir & 0x1000_0000 != 0; // v = 1
+        if is_mov_flags_read {
+            skipped += 1;
+            continue;
+        }
         // PC = 0 so the fetch reads the instruction we plant at RAM word 0.
         let mut st = [0u32; 19];
         for s in st.iter_mut().skip(1).take(17) {
@@ -128,7 +142,11 @@ fn single_instruction_matches_c() {
             );
         }
     }
-    eprintln!("single-instruction differential: {n} iterations matched C");
+    eprintln!(
+        "single-instruction differential: {} iterations matched C \
+         ({skipped} MOV-flags-read skipped as the one expected divergence)",
+        n - skipped
+    );
 }
 
 /// Layer 3: full-boot lockstep. Same deterministic schedule on both; assert the

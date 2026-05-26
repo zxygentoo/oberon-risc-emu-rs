@@ -21,23 +21,54 @@ const ROM_START: u32 = 0xFFFF_F800;
 const ROM_WORDS: usize = 512;
 const IO_START: u32 = 0xFFFF_FFC0;
 
-// Register-instruction opcodes (the C's anonymous enum).
-const MOV: u32 = 0;
-const LSL: u32 = 1;
-const ASR: u32 = 2;
-const ROR: u32 = 3;
-const AND: u32 = 4;
-const ANN: u32 = 5;
-const IOR: u32 = 6;
-const XOR: u32 = 7;
-const ADD: u32 = 8;
-const SUB: u32 = 9;
-const MUL: u32 = 10;
-const DIV: u32 = 11;
-const FAD: u32 = 12;
-const FSB: u32 = 13;
-const FML: u32 = 14;
-const FDV: u32 = 15;
+/// A register-instruction opcode: the 4-bit `op` field (the C's anonymous enum).
+/// Discriminants are the opcode values, so dispatch is exhaustive and the test
+/// encoder can use the variants directly.
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum Op {
+    Mov = 0,
+    Lsl,
+    Asr,
+    Ror,
+    And,
+    Ann,
+    Ior,
+    Xor,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Fad,
+    Fsb,
+    Fml,
+    Fdv,
+}
+
+impl Op {
+    /// Decode the 4-bit opcode field. The argument is `(ir >> 16) & 0xF`, so all
+    /// 16 values map to a variant.
+    fn from_u4(v: u32) -> Op {
+        match v {
+            0 => Op::Mov,
+            1 => Op::Lsl,
+            2 => Op::Asr,
+            3 => Op::Ror,
+            4 => Op::And,
+            5 => Op::Ann,
+            6 => Op::Ior,
+            7 => Op::Xor,
+            8 => Op::Add,
+            9 => Op::Sub,
+            10 => Op::Mul,
+            11 => Op::Div,
+            12 => Op::Fad,
+            13 => Op::Fsb,
+            14 => Op::Fml,
+            _ => Op::Fdv,
+        }
+    }
+}
 
 // Instruction-class selector bits in the top nibble of every instruction.
 const PBIT: u32 = 0x8000_0000;
@@ -257,8 +288,8 @@ impl Risc {
                 0xFFFF_0000 | im
             };
 
-            let a_val: u32 = match op {
-                MOV => {
+            let a_val: u32 = match Op::from_u4(op) {
+                Op::Mov => {
                     if ir & UBIT == 0 {
                         c_val
                     } else if ir & QBIT != 0 {
@@ -273,14 +304,14 @@ impl Risc {
                         self.h
                     }
                 }
-                LSL => b_val.wrapping_shl(c_val & 31),
-                ASR => ((b_val as i32) >> (c_val & 31)) as u32,
-                ROR => b_val.rotate_right(c_val & 31),
-                AND => b_val & c_val,
-                ANN => b_val & !c_val,
-                IOR => b_val | c_val,
-                XOR => b_val ^ c_val,
-                ADD => {
+                Op::Lsl => b_val.wrapping_shl(c_val & 31),
+                Op::Asr => ((b_val as i32) >> (c_val & 31)) as u32,
+                Op::Ror => b_val.rotate_right(c_val & 31),
+                Op::And => b_val & c_val,
+                Op::Ann => b_val & !c_val,
+                Op::Ior => b_val | c_val,
+                Op::Xor => b_val ^ c_val,
+                Op::Add => {
                     let mut a_val = b_val.wrapping_add(c_val);
                     if ir & UBIT != 0 {
                         a_val = a_val.wrapping_add(self.c as u32);
@@ -289,7 +320,7 @@ impl Risc {
                     self.v = (((a_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
                     a_val
                 }
-                SUB => {
+                Op::Sub => {
                     let mut a_val = b_val.wrapping_sub(c_val);
                     if ir & UBIT != 0 {
                         a_val = a_val.wrapping_sub(self.c as u32);
@@ -298,7 +329,7 @@ impl Risc {
                     self.v = (((b_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
                     a_val
                 }
-                MUL => {
+                Op::Mul => {
                     let tmp: u64 = if ir & UBIT == 0 {
                         ((b_val as i32 as i64) * (c_val as i32 as i64)) as u64
                     } else {
@@ -307,7 +338,7 @@ impl Risc {
                     self.h = (tmp >> 32) as u32;
                     tmp as u32
                 }
-                DIV => {
+                Op::Div => {
                     if (c_val as i32) > 0 {
                         if ir & UBIT == 0 {
                             let mut a_val = ((b_val as i32) / (c_val as i32)) as u32;
@@ -327,11 +358,10 @@ impl Risc {
                         q.quot
                     }
                 }
-                FAD => fp_add(b_val, c_val, ir & UBIT != 0, ir & VBIT != 0),
-                FSB => fp_add(b_val, c_val ^ 0x8000_0000, ir & UBIT != 0, ir & VBIT != 0),
-                FML => fp_mul(b_val, c_val),
-                FDV => fp_div(b_val, c_val),
-                _ => unreachable!(),
+                Op::Fad => fp_add(b_val, c_val, ir & UBIT != 0, ir & VBIT != 0),
+                Op::Fsb => fp_add(b_val, c_val ^ 0x8000_0000, ir & UBIT != 0, ir & VBIT != 0),
+                Op::Fml => fp_mul(b_val, c_val),
+                Op::Fdv => fp_div(b_val, c_val),
             };
             self.set_register(a, a_val);
         } else if ir & QBIT == 0 {
@@ -659,10 +689,16 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    // The opcodes under their ISA mnemonics, for terse instruction encoding.
+    use super::Op::{
+        Add as ADD, And as AND, Ann as ANN, Asr as ASR, Div as DIV, Fsb as FSB, Ior as IOR,
+        Lsl as LSL, Mov as MOV, Mul as MUL, Ror as ROR, Sub as SUB, Xor as XOR,
+    };
+
     /// Encode a register-format instruction. `ci` is the c register index (when
     /// `q == 0`) or the 16-bit immediate (when `q == 1`).
-    fn reg(q: u32, u: u32, v: u32, a: u32, b: u32, op: u32, ci: u32) -> u32 {
-        (q << 30) | (u << 29) | (v << 28) | (a << 24) | (b << 20) | (op << 16) | ci
+    fn reg(q: u32, u: u32, v: u32, a: u32, b: u32, op: Op, ci: u32) -> u32 {
+        (q << 30) | (u << 29) | (v << 28) | (a << 24) | (b << 20) | ((op as u32) << 16) | ci
     }
     /// Encode a memory-format instruction. `u`: 0 = load, 1 = store. `v`: 0 = word, 1 = byte.
     fn mem(u: u32, v: u32, a: u32, b: u32, off: u32) -> u32 {
@@ -790,7 +826,7 @@ mod tests {
             r.r[2] = 0x0F00;
             r.r[3] = 0x00F0;
             r.single_step();
-            assert_eq!(r.r[1], want, "op {op}");
+            assert_eq!(r.r[1], want, "op {op:?}");
         }
     }
 

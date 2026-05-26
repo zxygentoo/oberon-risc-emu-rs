@@ -139,6 +139,38 @@ bitflags::bitflags! {
     }
 }
 
+/// A byte address in the 32-bit address space (a memory operand or IO register).
+/// Kept distinct from [`WordAddr`] so the `/ 4` (word index) and `% 4` (byte
+/// offset) conversions are explicit and unmixable at the load/store boundary.
+#[derive(Clone, Copy)]
+struct ByteAddr(u32);
+
+/// A word (4-byte) index into RAM or ROM.
+#[derive(Clone, Copy)]
+struct WordAddr(u32);
+
+impl ByteAddr {
+    /// The index of the word containing this address (`/ 4`).
+    fn word(self) -> WordAddr {
+        WordAddr(self.0 / 4)
+    }
+    /// This address's byte offset within its word (`% 4`, in `0..4`).
+    fn byte_in_word(self) -> u32 {
+        self.0 % 4
+    }
+}
+
+impl WordAddr {
+    /// The byte address of this word's first byte (`* 4`).
+    fn byte(self) -> ByteAddr {
+        ByteAddr(self.0.wrapping_mul(4))
+    }
+    /// As a slice index into RAM or ROM.
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// A damaged (dirty) rectangle of the framebuffer, in framebuffer-word columns
 /// and line rows. `y1 > y2` means "nothing damaged".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,7 +459,7 @@ impl Risc {
             let off = (ir & 0x000F_FFFF) as i32;
             let off = (off ^ 0x0008_0000) - 0x0008_0000; // sign-extend 20-bit
 
-            let address = self.r[b as usize].wrapping_add(off as u32);
+            let address = ByteAddr(self.r[b as usize].wrapping_add(off as u32));
             if ir & UBIT == 0 {
                 let a_val = if ir & VBIT == 0 {
                     self.load_word(address)
@@ -446,11 +478,13 @@ impl Risc {
             let t = negate ^ Cond::from_u3((ir >> 24) & 7).holds(self.flags);
             if t {
                 if ir & VBIT != 0 {
-                    self.set_register(15, self.pc.wrapping_mul(4));
+                    // The link register holds the return point as a byte address.
+                    self.set_register(15, WordAddr(self.pc).byte().0);
                 }
                 if ir & UBIT == 0 {
+                    // Register-indirect: the register holds a byte address.
                     let c = ir & 0x0000_000F;
-                    self.pc = self.r[c as usize] / 4;
+                    self.pc = ByteAddr(self.r[c as usize]).word().0;
                 } else {
                     let off = (ir & 0x00FF_FFFF) as i32;
                     let off = (off ^ 0x0080_0000) - 0x0080_0000; // sign-extend 24-bit
@@ -466,17 +500,17 @@ impl Risc {
         self.flags.set(Flags::N, (value as i32) < 0);
     }
 
-    fn load_word(&mut self, address: u32) -> u32 {
-        if address < self.mem_size {
-            self.ram[(address / 4) as usize]
+    fn load_word(&mut self, addr: ByteAddr) -> u32 {
+        if addr.0 < self.mem_size {
+            self.ram[addr.word().index()]
         } else {
-            self.load_io(address)
+            self.load_io(addr.0)
         }
     }
 
-    fn load_byte(&mut self, address: u32) -> u8 {
-        let w = self.load_word(address);
-        (w >> (address % 4 * 8)) as u8
+    fn load_byte(&mut self, addr: ByteAddr) -> u8 {
+        let w = self.load_word(addr);
+        (w >> (addr.byte_in_word() * 8)) as u8
     }
 
     fn update_damage(&mut self, w: i32) {
@@ -498,26 +532,27 @@ impl Risc {
         }
     }
 
-    fn store_word(&mut self, address: u32, value: u32) {
-        if address < self.display_start {
-            self.ram[(address / 4) as usize] = value;
-        } else if address < self.mem_size {
-            self.ram[(address / 4) as usize] = value;
-            self.update_damage((address / 4 - self.display_start / 4) as i32);
+    fn store_word(&mut self, addr: ByteAddr, value: u32) {
+        if addr.0 < self.display_start {
+            self.ram[addr.word().index()] = value;
+        } else if addr.0 < self.mem_size {
+            self.ram[addr.word().index()] = value;
+            let fb_word0 = ByteAddr(self.display_start).word();
+            self.update_damage((addr.word().0 - fb_word0.0) as i32);
         } else {
-            self.store_io(address, value);
+            self.store_io(addr.0, value);
         }
     }
 
-    fn store_byte(&mut self, address: u32, value: u8) {
-        if address < self.mem_size {
-            let mut w = self.load_word(address);
-            let shift = (address & 3) * 8;
+    fn store_byte(&mut self, addr: ByteAddr, value: u8) {
+        if addr.0 < self.mem_size {
+            let mut w = self.load_word(addr);
+            let shift = addr.byte_in_word() * 8;
             w &= !(0xFFu32 << shift);
             w |= (value as u32) << shift;
-            self.store_word(address, w);
+            self.store_word(addr, w);
         } else {
-            self.store_io(address, value as u32);
+            self.store_io(addr.0, value as u32);
         }
     }
 
@@ -645,7 +680,7 @@ impl Risc {
 
     /// The framebuffer words, starting at `display_start`. Port of `risc_get_framebuffer_ptr`.
     pub fn framebuffer(&self) -> &[u32] {
-        &self.ram[(self.display_start / 4) as usize..]
+        &self.ram[ByteAddr(self.display_start).word().index()..]
     }
 
     /// Take the accumulated damage rectangle and reset it to empty. Port of
@@ -1046,9 +1081,9 @@ mod tests {
     fn store_byte_rmw_little_endian() {
         let mut r = cpu();
         r.ram[0x40] = 0x1122_3344; // address 0x100
-        r.store_byte(0x100, 0xAB);
+        r.store_byte(ByteAddr(0x100), 0xAB);
         assert_eq!(r.ram[0x40], 0x1122_33AB, "low byte replaced, others kept");
-        r.store_byte(0x102, 0xEE);
+        r.store_byte(ByteAddr(0x102), 0xEE);
         assert_eq!(r.ram[0x40], 0x11EE_33AB, "byte 2 replaced");
     }
 
@@ -1056,10 +1091,10 @@ mod tests {
     fn load_byte_little_endian() {
         let mut r = cpu();
         r.ram[0x40] = 0x1122_3344;
-        assert_eq!(r.load_byte(0x100), 0x44);
-        assert_eq!(r.load_byte(0x101), 0x33);
-        assert_eq!(r.load_byte(0x102), 0x22);
-        assert_eq!(r.load_byte(0x103), 0x11);
+        assert_eq!(r.load_byte(ByteAddr(0x100)), 0x44);
+        assert_eq!(r.load_byte(ByteAddr(0x101)), 0x33);
+        assert_eq!(r.load_byte(ByteAddr(0x102)), 0x22);
+        assert_eq!(r.load_byte(ByteAddr(0x103)), 0x11);
     }
 
     // ---- Branches ----
@@ -1122,7 +1157,7 @@ mod tests {
     fn store_to_display_marks_damage() {
         let mut r = cpu();
         let _ = r.framebuffer_damage(); // clear initial full-screen damage
-        r.store_word(DEFAULT_DISPLAY_START, 0x0000_00FF);
+        r.store_word(ByteAddr(DEFAULT_DISPLAY_START), 0x0000_00FF);
         let d = r.framebuffer_damage();
         assert_eq!(
             d,

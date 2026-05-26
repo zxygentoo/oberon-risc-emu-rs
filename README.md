@@ -1,93 +1,103 @@
 # oberon-risc-emu-rs
 
-A Rust port of Peter De Wachter's [`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu),
-an emulator for Niklaus Wirth's Project Oberon RISC5 machine. It boots a Project
-Oberon disk image to the interactive desktop.
+A Rust port of Peter De Wachter's [`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu) —
+an emulator for Niklaus Wirth's Project Oberon RISC5 machine. It boots a disk
+image to the interactive desktop.
 
-The pure RISC5 machine — CPU, software floating-point, MMIO, disk, serial — lives
-in the [`risc-core`](crates/risc-core) library crate; this crate adds the GUI on a
-pure-Rust stack ([`winit`](https://crates.io/crates/winit) +
-[`softbuffer`](https://crates.io/crates/softbuffer) +
-[`arboard`](https://crates.io/crates/arboard), no system SDL). The core is checked
-bit-for-bit against the C reference — software floating-point vectors, a C-derived
-boot golden, and live co-simulation (see [Testing](#testing)) — with a single
-documented exception in [DIVERGENCES.md](DIVERGENCES.md).
+![Project Oberon (Oberon V5) desktop](po2013.png)
 
-## Building
+- **Pure Rust, no system SDL** — [`winit`](https://crates.io/crates/winit) +
+  [`softbuffer`](https://crates.io/crates/softbuffer) +
+  [`arboard`](https://crates.io/crates/arboard).
+- **Workspace** — a dependency-light [`risc-core`](crates/risc-core) library
+  (CPU, software FP, MMIO, disk, serial) plus the top-level `oberon-risc-emu`
+  crate: the windowing frontend, which builds the `risc` executable you run.
+- **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
+  live co-simulation — save one [documented divergence](DIVERGENCES.md).
+
+## Build
 
 ```sh
-cargo build --release
+cargo build --release      # whole workspace
+cargo build -p risc-core   # core alone, no GUI/system libs
 ```
 
-This is a Cargo workspace: the `risc-core` library crate (dependency-light) and
-the `oberon-risc-emu` frontend crate carrying the `risc` binary. Build the core
-alone — without the windowing/clipboard system libs — with
-`cargo build -p risc-core`.
+## Run
 
-## Running
-
-A Project Oberon disk image is bundled under [`DiskImage/`](DiskImage); boot it
-directly:
+A disk image is bundled under [`DiskImage/`](DiskImage):
 
 ```sh
 cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 ```
 
-Other dated images are available upstream under
-[`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+- **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
+  the left `Alt` key acts as the middle button. Hotkeys: `F12` /
+  `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
+- **Headless** — deterministic, windowless run for CI / golden regeneration:
+  `cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk`.
+- More dated images live upstream under
+  [`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
 
-Options (mirroring the C emulator):
+## Command line options
 
-```
---fullscreen          Start in full screen
---zoom REAL           Scale the display in windowed mode (default: auto 2x)
---leds                Log LED state on stdout
---mem MEGS            Set memory size
---size WIDTHxHEIGHT   Set framebuffer size
---boot-from-serial    Boot from the serial line (no disk image required)
---serial-in FILE      Read serial input from FILE
---serial-out FILE     Write serial output to FILE
-```
+`risc [OPTIONS] DISK-IMAGE` (i.e. `cargo run --release -- [OPTIONS] DISK-IMAGE`):
 
-Hotkeys: `F12` or `Ctrl+Shift+Delete` reset, `F11` / `Alt+Enter` toggle
-fullscreen, `Alt+F4` quits. The left `Alt` key acts as the middle mouse button
-(Oberon is a three-button-mouse system).
+- `--fullscreen` — start in fullscreen.
+- `--zoom REAL` — scale the windowed display (default: auto 2× on large monitors).
+- `--mem MEGS` — give the machine more than its default 1 MB of RAM.
+- `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
+- `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
+- `--boot-from-serial` — boot over the serial line; no disk image needed.
+- `--serial-in FILE` / `--serial-out FILE` — wire the serial line to files (Unix only).
 
-For a deterministic, windowless run (CI checks, golden-hash regeneration), the
-`headless` subcommand boots for N frames and prints framebuffer/state hashes:
+## Transferring files
+
+Oberon's `PCLink` (the default serial device) copies files to and from the host:
+
+1. In Oberon, middle-click **`PCLink1.Run`** to start the transfer task.
+2. On the host, use upstream's
+   [`pcsend.sh` / `pcreceive.sh`](https://github.com/pdewacht/oberon-risc-emu)
+   — our protocol is wire-compatible. They drop a `PCLink.REC` (a host file to
+   send *to* Oberon) or `PCLink.SND` (a file to receive *from* Oberon) job file
+   in the emulator's working directory.
+
+For text, the clipboard is simpler.
+
+## Clipboard integration
+
+The bundled image ships a `Clipboard` module bridging Oberon to the host OS
+clipboard (via [`arboard`](https://crates.io/crates/arboard)). Middle-click:
+
+- `Clipboard.Paste` — insert the host clipboard at the caret.
+- `Clipboard.CopySelection` — copy the current text selection to the host.
+- `Clipboard.CopyViewer` — copy the focused viewer to the host.
+
+## Known issues
+
+- The wireless network interface is not emulated.
+- Raw serial (`--serial-in` / `--serial-out`) is Unix-only.
+- Oberon assumes a US keyboard layout.
+
+## Test
 
 ```sh
-cargo run --release -- headless --frames 250 --hash path/to/Oberon-2020-08-18.dsk
+cargo test --workspace    # core + frontend units
+cargo test -p risc-core   # core alone, no GUI deps
 ```
 
-## Testing
-
-```sh
-cargo test --workspace   # full suite (core + frontend units)
-cargo test -p risc-core  # pure core alone, no GUI deps
-```
-
-The floating-point routines are checked against ~15k vectors generated from the C
-reference (`crates/risc-core/tests/data/fp_vectors.txt`). The boot tests in
-`crates/risc-core/tests/cpu.rs` are gated on the `OBERON_DISK` environment
-variable (a path to a `.dsk`) — point it at the bundled image. Use an absolute
-path, since `cargo test` runs each crate's tests from its own directory:
+Boot tests are gated on `OBERON_DISK`; point it at the bundled image with an
+absolute path (`cargo test` runs each crate's tests from its own directory):
 
 ```sh
 OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" cargo test
 ```
 
-With it set, `boots_to_a_live_framebuffer` drives a headless boot and checks the
-desktop renders, and `boot_matches_c_reference` asserts the framebuffer and CPU
-state hash bit-identically to the C reference at fixed checkpoints. The vectors
-and golden hashes are regenerated by the small C harnesses in
-`crates/risc-core/tools/` (see their header comments).
-
-### Live co-simulation against the C reference
-
-For the strongest check, `risc-core`'s `cosim` feature compiles the C reference
-itself (`crates/risc-core/cosim/shim.c` + `risc-fp.c` + `disk.c` via `build.rs`)
-and links it for live comparison. It needs a C toolchain and the sibling C repo:
+- **FP** — ~15k C-generated vectors (`crates/risc-core/tests/data/fp_vectors.txt`).
+- **Boot golden** — hashes the framebuffer + CPU state against C at fixed
+  checkpoints; regenerated by the C harnesses in `crates/risc-core/tools/`.
+- **Live co-simulation** — the `cosim` feature compiles the C reference and
+  compares every FP/`idiv` result, a random instruction over random state, and a
+  full-boot lockstep, frame by frame. Needs a C toolchain and the sibling C repo:
 
 ```sh
 OBERON_C_SRC=/path/to/oberon-risc-emu/src \
@@ -95,17 +105,11 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" \
   cargo test -p risc-core --release --features cosim
 ```
 
-This runs three differential layers: every FP/`idiv` result over a million-plus
-random inputs, a random single instruction over random CPU state (covering the
-whole decode/ALU/flag/branch space, including paths the boot never reaches), and
-a full-boot lockstep that asserts the entire CPU state and framebuffer match C
-at every frame. Iteration counts are tunable via `COSIM_FP_ITERS` /
-`COSIM_INSN_ITERS`. (The render hot path has a `cargo bench` microbenchmark.)
+Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS`; the
+render hot path has a `cargo bench` microbenchmark.
 
 ## License
 
-MIT, matching the upstream project. See [LICENSE](LICENSE).
-
-The bundled `DiskImage/` disk image is Project Oberon system software, included
-for convenience from the upstream distribution; it is the work of its original
-authors and is not covered by this repository's MIT license.
+MIT, matching upstream — see [LICENSE](LICENSE). The bundled `DiskImage/` image
+is Project Oberon system software (its authors' work, included from the upstream
+distribution) and is not covered by this repository's MIT license.

@@ -39,6 +39,12 @@ const FSB: u32 = 13;
 const FML: u32 = 14;
 const FDV: u32 = 15;
 
+// Instruction-class selector bits in the top nibble of every instruction.
+const PBIT: u32 = 0x8000_0000;
+const QBIT: u32 = 0x4000_0000;
+const UBIT: u32 = 0x2000_0000;
+const VBIT: u32 = 0x1000_0000;
+
 /// A damaged (dirty) rectangle of the framebuffer, in framebuffer-word columns
 /// and line rows. `y1 > y2` means "nothing damaged".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,11 +239,6 @@ impl Risc {
             return;
         };
         self.pc = self.pc.wrapping_add(1);
-
-        const PBIT: u32 = 0x8000_0000;
-        const QBIT: u32 = 0x4000_0000;
-        const UBIT: u32 = 0x2000_0000;
-        const VBIT: u32 = 0x1000_0000;
 
         if ir & PBIT == 0 {
             // Register instructions.
@@ -479,7 +480,7 @@ impl Risc {
                 if self.key_cnt > 0 {
                     let scancode = self.key_buf[0];
                     self.key_cnt -= 1;
-                    self.key_buf.copy_within(1..1 + self.key_cnt as usize, 0);
+                    self.key_buf.copy_within(1..=(self.key_cnt as usize), 0);
                     scancode as u32
                 } else {
                     0

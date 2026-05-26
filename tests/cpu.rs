@@ -92,7 +92,7 @@ fn boot_matches_c_reference() {
         eprintln!("OBERON_DISK not set; skipping golden boot test");
         return;
     };
-    let size = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+    let size = std::fs::metadata(&src).map_or(0, |m| m.len());
     if size != GOLDEN_IMAGE_SIZE {
         eprintln!(
             "OBERON_DISK is {size} bytes, not the golden image ({GOLDEN_IMAGE_SIZE}); \

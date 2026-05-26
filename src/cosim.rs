@@ -54,7 +54,15 @@ pub fn fp_div(x: u32, y: u32) -> u32 {
 /// `idiv` in the C reference, as `(quot, rem)`.
 pub fn idiv(x: u32, y: u32, signed_div: bool) -> (u32, u32) {
     let (mut q, mut r) = (0u32, 0u32);
-    unsafe { cosim_idiv(x, y, signed_div as i32, &mut q, &mut r) };
+    unsafe {
+        cosim_idiv(
+            x,
+            y,
+            signed_div as i32,
+            std::ptr::from_mut(&mut q),
+            std::ptr::from_mut(&mut r),
+        );
+    };
     (q, r)
 }
 

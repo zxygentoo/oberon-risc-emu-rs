@@ -22,7 +22,7 @@ enum KType {
 /// PS/2 scancode + emission style for a physical key, or `None` for keys Oberon
 /// does not use (the C's `K_UNKNOWN`).
 fn lookup(key: KeyCode) -> Option<(u8, KType)> {
-    use KType::*;
+    use KType::{Extended, Normal, NumlockHack, ShiftHack};
     use KeyCode as K;
     Some(match key {
         K::KeyA => (0x1C, Normal),

@@ -1,4 +1,4 @@
-//! Serial-line devices: PCLink file transfer and raw host serial.
+//! Serial-line devices: `PCLink` file transfer and raw host serial.
 
 pub mod pclink;
 

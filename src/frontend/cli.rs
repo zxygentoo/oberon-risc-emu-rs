@@ -73,7 +73,7 @@ impl Cli {
         let size_option = self.size.is_some();
         if let Some(s) = &self.size {
             let (w, h) = parse_size(s)?;
-            width = w.clamp(32, MAX_DIM) & !31;
+            width = w.clamp(32, MAX_DIM) & !31; // round down to a multiple of 32
             height = h.clamp(32, MAX_DIM);
         }
 

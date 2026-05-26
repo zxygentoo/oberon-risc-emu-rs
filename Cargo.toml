@@ -44,3 +44,41 @@ libc = "0.2"
 [build-dependencies]
 # Compiles the C reference shim for the `cosim` feature only.
 cc = { version = "1", optional = true }
+
+# Lint policy. Warnings are treated as errors in CI via
+# `cargo clippy --all-targets -- -D warnings` (kept out of the manifest so a new
+# toolchain's lints surface as CI failures, not broken local builds). We opt
+# into clippy::pedantic and curate away the lints that fight a deliberately
+# bit-exact, C-derived emulator.
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# Modelling exact 32-bit machine arithmetic means pervasive, deliberate `as`
+# conversions (u32<->i32 reinterpretation, narrowing to bytes/indices). These
+# are the emulator's nature, not bugs.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"            # keep `as` uniform in bit-twiddling code
+cast_precision_loss = "allow"      # int->f64 in display scaling
+
+# The boot ROM is a transcribed 512-word machine-code image, and the golden/FNV
+# tables are raw hashes; nibble-grouping them adds nothing. Human-authored
+# literals already use separators by convention.
+unreadable_literal = "allow"
+
+# A small emulator API: #[must_use] on every getter and `# Errors`/`# Panics`
+# sections on self-evident `io::Result`s would be noise.
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+struct_excessive_bools = "allow"   # Config mirrors CLI flags; CpuState the NZCV flags
+
+# Faithful-port shape: the CPU step and the 215-entry PS/2 table are long by
+# nature; fp.rs uses the spec's operand names (x/y/u/v) and bit-exact masks.
+too_many_lines = "allow"
+many_single_char_names = "allow"
+verbose_bit_mask = "allow"
+if_not_else = "allow"
+float_cmp = "allow"                # render tests compare exact scale constants
+decimal_bitwise_operands = "allow" # masking decimal screen dims reads clearer

@@ -88,12 +88,11 @@ fn fp_vectors_match_c_reference() {
         checks > 10_000,
         "expected a substantial vector set, got {checks}"
     );
-    if fails != 0 {
-        panic!(
-            "{fails}/{checks} FP differential checks failed:\n{}",
-            samples.join("\n")
-        );
-    }
+    assert!(
+        fails == 0,
+        "{fails}/{checks} FP differential checks failed:\n{}",
+        samples.join("\n")
+    );
     eprintln!("FP differential: {checks} checks passed");
 }
 

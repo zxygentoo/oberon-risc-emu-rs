@@ -6,7 +6,7 @@
 //! as an `Option<Box<dyn _>>` and invokes it synchronously from inside the CPU
 //! step (`load_io`/`store_io`).
 
-/// RS232 serial line: PCLink file transfer or a raw host serial port.
+/// RS232 serial line: `PCLink` file transfer or a raw host serial port.
 pub trait Serial {
     fn read_status(&mut self) -> u32;
     fn read_data(&mut self) -> u32;

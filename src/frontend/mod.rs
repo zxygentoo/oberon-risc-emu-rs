@@ -110,8 +110,9 @@ struct App {
     texture: Vec<u32>,
 
     window: Option<Rc<Window>>,
-    // Kept alive for the surface's display connection.
-    _context: Option<SbContext>,
+    // Held for the surface's display connection; never read after construction.
+    #[allow(dead_code)]
+    context: Option<SbContext>,
     surface: Option<SbSurface>,
 
     win_w: u32,
@@ -139,7 +140,7 @@ impl App {
             risc,
             cfg,
             window: None,
-            _context: None,
+            context: None,
             surface: None,
             win_w: tex_w as u32,
             win_h: tex_h as u32,
@@ -180,9 +181,8 @@ impl App {
         if surface.resize(nw, nh).is_err() {
             return;
         }
-        let mut buf = match surface.buffer_mut() {
-            Ok(b) => b,
-            Err(_) => return,
+        let Ok(mut buf) = surface.buffer_mut() else {
+            return;
         };
         render::scale_into(
             &mut buf,
@@ -219,11 +219,10 @@ impl ApplicationHandler for App {
             let big = event_loop
                 .primary_monitor()
                 .or_else(|| event_loop.available_monitors().next())
-                .map(|m| {
+                .is_some_and(|m| {
                     let s = m.size();
                     s.width >= self.tex_w as u32 * 2 && s.height >= self.tex_h as u32 * 2
-                })
-                .unwrap_or(false);
+                });
             if big {
                 2.0
             } else {
@@ -268,7 +267,7 @@ impl ApplicationHandler for App {
 
         let size = window.inner_size();
         self.window = Some(window);
-        self._context = Some(context);
+        self.context = Some(context);
         self.surface = Some(surface);
         self.reconfigure(size.width.max(1), size.height.max(1));
 

@@ -33,8 +33,8 @@ cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 - **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
   the left `Alt` key acts as the middle button. Hotkeys: `F12` /
   `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
-- More dated images live upstream under
-  [`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+- We bundle one image; the original `oberon-risc-emu` repo has other dated
+  versions in [its `DiskImage/` directory](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
 
 ## Command line options
 

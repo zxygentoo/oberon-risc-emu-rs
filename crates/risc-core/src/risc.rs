@@ -27,7 +27,8 @@ const IO_START: u32 = 0xFFFF_FFC0;
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 enum Op {
-    Mov = 0,
+    // In opcode order: Mov = 0 … Fdv = 15.
+    Mov,
     Lsl,
     Asr,
     Ror,

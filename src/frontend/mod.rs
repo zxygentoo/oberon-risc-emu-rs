@@ -5,6 +5,9 @@ mod cli;
 mod clipboard;
 mod input;
 mod ps2;
+// `pub` only so the benches/render.rs microbench (a separate target) can reach
+// the scaling functions; not part of this crate's real API, so doc-hidden.
+#[doc(hidden)]
 pub mod render;
 
 use std::num::NonZeroU32;

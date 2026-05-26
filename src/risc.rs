@@ -70,11 +70,74 @@ impl Op {
     }
 }
 
+/// A branch condition: the 3-bit `cc` field, under its ISA mnemonic. The branch
+/// is taken when [`Cond::holds`], optionally inverted by the negate bit.
+#[derive(Clone, Copy)]
+enum Cond {
+    Mi,   // negative
+    Eq,   // zero
+    Cs,   // carry set
+    Vs,   // overflow
+    Ls,   // lower or same (C | Z)
+    Lt,   // less than (N != V)
+    Le,   // less or equal ((N != V) | Z)
+    True, // always
+}
+
+impl Cond {
+    /// Decode the 3-bit condition field. The argument is `(ir >> 24) & 7`, so
+    /// all 8 values map to a variant.
+    fn from_u3(v: u32) -> Cond {
+        match v {
+            0 => Cond::Mi,
+            1 => Cond::Eq,
+            2 => Cond::Cs,
+            3 => Cond::Vs,
+            4 => Cond::Ls,
+            5 => Cond::Lt,
+            6 => Cond::Le,
+            _ => Cond::True,
+        }
+    }
+
+    /// Whether the (un-negated) condition holds for the given flags.
+    fn holds(self, f: Flags) -> bool {
+        let (n, z, c, v) = (
+            f.contains(Flags::N),
+            f.contains(Flags::Z),
+            f.contains(Flags::C),
+            f.contains(Flags::V),
+        );
+        match self {
+            Cond::Mi => n,
+            Cond::Eq => z,
+            Cond::Cs => c,
+            Cond::Vs => v,
+            Cond::Ls => c | z,
+            Cond::Lt => n ^ v,
+            Cond::Le => (n ^ v) | z,
+            Cond::True => true,
+        }
+    }
+}
+
 // Instruction-class selector bits in the top nibble of every instruction.
 const PBIT: u32 = 0x8000_0000;
 const QBIT: u32 = 0x4000_0000;
 const UBIT: u32 = 0x2000_0000;
 const VBIT: u32 = 0x1000_0000;
+
+bitflags::bitflags! {
+    /// The four ALU status flags. Bit positions match the `CpuState` / cosim
+    /// packing (`Z | N<<1 | C<<2 | V<<3`), so state round-trips as `flags.bits()`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Flags: u8 {
+        const Z = 1 << 0;
+        const N = 1 << 1;
+        const C = 1 << 2;
+        const V = 1 << 3;
+    }
+}
 
 /// A damaged (dirty) rectangle of the framebuffer, in framebuffer-word columns
 /// and line rows. `y1 > y2` means "nothing damaged".
@@ -93,10 +156,7 @@ pub struct CpuState {
     pub pc: u32,
     pub r: [u32; 16],
     pub h: u32,
-    pub z: bool,
-    pub n: bool,
-    pub c: bool,
-    pub v: bool,
+    pub flags: Flags,
 }
 
 /// The RISC5 machine: CPU registers, RAM/ROM, and attached devices.
@@ -104,10 +164,7 @@ pub struct Risc {
     pc: u32,
     r: [u32; 16],
     h: u32,
-    z: bool,
-    n: bool,
-    c: bool,
-    v: bool,
+    flags: Flags,
 
     mem_size: u32,
     display_start: u32,
@@ -143,10 +200,7 @@ impl Risc {
             pc: 0,
             r: [0; 16],
             h: 0,
-            z: false,
-            n: false,
-            c: false,
-            v: false,
+            flags: Flags::empty(),
             mem_size: DEFAULT_MEM_SIZE,
             display_start: DEFAULT_DISPLAY_START,
             progress: 0,
@@ -296,10 +350,10 @@ impl Risc {
                         c_val << 16
                     } else if ir & VBIT != 0 {
                         0xD0 // ???
-                            | ((self.n as u32) << 31)
-                            | ((self.z as u32) << 30)
-                            | ((self.c as u32) << 29)
-                            | ((self.v as u32) << 28)
+                            | (u32::from(self.flags.contains(Flags::N)) << 31)
+                            | (u32::from(self.flags.contains(Flags::Z)) << 30)
+                            | (u32::from(self.flags.contains(Flags::C)) << 29)
+                            | (u32::from(self.flags.contains(Flags::V)) << 28)
                     } else {
                         self.h
                     }
@@ -314,19 +368,21 @@ impl Risc {
                 Op::Add => {
                     let mut a_val = b_val.wrapping_add(c_val);
                     if ir & UBIT != 0 {
-                        a_val = a_val.wrapping_add(self.c as u32);
+                        a_val = a_val.wrapping_add(u32::from(self.flags.contains(Flags::C)));
                     }
-                    self.c = a_val < b_val;
-                    self.v = (((a_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
+                    self.flags.set(Flags::C, a_val < b_val);
+                    self.flags
+                        .set(Flags::V, (((a_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0);
                     a_val
                 }
                 Op::Sub => {
                     let mut a_val = b_val.wrapping_sub(c_val);
                     if ir & UBIT != 0 {
-                        a_val = a_val.wrapping_sub(self.c as u32);
+                        a_val = a_val.wrapping_sub(u32::from(self.flags.contains(Flags::C)));
                     }
-                    self.c = a_val > b_val;
-                    self.v = (((b_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
+                    self.flags.set(Flags::C, a_val > b_val);
+                    self.flags
+                        .set(Flags::V, (((b_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0);
                     a_val
                 }
                 Op::Mul => {
@@ -385,19 +441,9 @@ impl Risc {
                 self.store_byte(address, self.r[a as usize] as u8);
             }
         } else {
-            // Branch instructions.
-            let mut t = ((ir >> 27) & 1) != 0;
-            match (ir >> 24) & 7 {
-                0 => t ^= self.n,
-                1 => t ^= self.z,
-                2 => t ^= self.c,
-                3 => t ^= self.v,
-                4 => t ^= self.c | self.z,
-                5 => t ^= self.n ^ self.v,
-                6 => t ^= (self.n ^ self.v) | self.z,
-                7 => t ^= true,
-                _ => unreachable!(),
-            }
+            // Branch instructions. Bit 27 negates the condition.
+            let negate = ((ir >> 27) & 1) != 0;
+            let t = negate ^ Cond::from_u3((ir >> 24) & 7).holds(self.flags);
             if t {
                 if ir & VBIT != 0 {
                     self.set_register(15, self.pc.wrapping_mul(4));
@@ -416,8 +462,8 @@ impl Risc {
 
     fn set_register(&mut self, reg: u32, value: u32) {
         self.r[reg as usize] = value;
-        self.z = value == 0;
-        self.n = (value as i32) < 0;
+        self.flags.set(Flags::Z, value == 0);
+        self.flags.set(Flags::N, (value as i32) < 0);
     }
 
     fn load_word(&mut self, address: u32) -> u32 {
@@ -631,10 +677,7 @@ impl Risc {
             pc: self.pc,
             r: self.r,
             h: self.h,
-            z: self.z,
-            n: self.n,
-            c: self.c,
-            v: self.v,
+            flags: self.flags,
         }
     }
 }
@@ -655,11 +698,7 @@ impl Risc {
         self.pc = st[0];
         self.r.copy_from_slice(&st[1..17]);
         self.h = st[17];
-        let f = st[18];
-        self.z = f & 1 != 0;
-        self.n = f & 2 != 0;
-        self.c = f & 4 != 0;
-        self.v = f & 8 != 0;
+        self.flags = Flags::from_bits_truncate(st[18] as u8);
     }
 
     pub fn cosim_dump_state(&self) -> [u32; 19] {
@@ -667,7 +706,7 @@ impl Risc {
         st[0] = self.pc;
         st[1..17].copy_from_slice(&self.r);
         st[17] = self.h;
-        st[18] = self.z as u32 | (self.n as u32) << 1 | (self.c as u32) << 2 | (self.v as u32) << 3;
+        st[18] = u32::from(self.flags.bits());
         st
     }
 
@@ -720,6 +759,22 @@ mod tests {
         r
     }
 
+    // Terse flag accessors for the assertions below.
+    impl Risc {
+        fn z(&self) -> bool {
+            self.flags.contains(Flags::Z)
+        }
+        fn n(&self) -> bool {
+            self.flags.contains(Flags::N)
+        }
+        fn c(&self) -> bool {
+            self.flags.contains(Flags::C)
+        }
+        fn v(&self) -> bool {
+            self.flags.contains(Flags::V)
+        }
+    }
+
     // ---- MOV ----
 
     #[test]
@@ -728,7 +783,7 @@ mod tests {
         r.ram[0] = reg(1, 0, 0, 1, 0, MOV, 0x1234);
         r.single_step();
         assert_eq!(r.r[1], 0x1234);
-        assert!(!r.z && !r.n);
+        assert!(!r.z() && !r.n());
         assert_eq!(r.pc, 1);
     }
 
@@ -739,7 +794,7 @@ mod tests {
         r.ram[0] = reg(1, 0, 1, 1, 0, MOV, 0x8000);
         r.single_step();
         assert_eq!(r.r[1], 0xFFFF_8000);
-        assert!(r.n && !r.z);
+        assert!(r.n() && !r.z());
     }
 
     #[test]
@@ -765,8 +820,8 @@ mod tests {
         let mut r = cpu();
         // q=0, u=1, v=1 -> 0xD0 | NZCV.
         r.ram[0] = reg(0, 1, 1, 1, 0, MOV, 0);
-        r.n = true;
-        r.c = true;
+        r.flags.insert(Flags::N);
+        r.flags.insert(Flags::C);
         r.single_step();
         assert_eq!(r.r[1], 0xD0 | 0x8000_0000 | 0x2000_0000);
     }
@@ -840,9 +895,9 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0x8000_0000);
-        assert!(r.v, "signed overflow");
-        assert!(!r.c, "no unsigned carry");
-        assert!(r.n && !r.z);
+        assert!(r.v(), "signed overflow");
+        assert!(!r.c(), "no unsigned carry");
+        assert!(r.n() && !r.z());
     }
 
     #[test]
@@ -853,9 +908,9 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0);
-        assert!(r.c, "unsigned carry");
-        assert!(!r.v);
-        assert!(r.z && !r.n);
+        assert!(r.c(), "unsigned carry");
+        assert!(!r.v());
+        assert!(r.z() && !r.n());
     }
 
     #[test]
@@ -864,7 +919,7 @@ mod tests {
         r.ram[0] = reg(0, 1, 0, 1, 2, ADD, 3); // u=1 -> add carry
         r.r[2] = 1;
         r.r[3] = 1;
-        r.c = true;
+        r.flags.insert(Flags::C);
         r.single_step();
         assert_eq!(r.r[1], 3);
     }
@@ -877,8 +932,8 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0x7FFF_FFFF);
-        assert!(r.v, "signed overflow");
-        assert!(!r.c);
+        assert!(r.v(), "signed overflow");
+        assert!(!r.c());
     }
 
     #[test]
@@ -889,7 +944,7 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0xFFFF_FFFF);
-        assert!(r.c, "borrow");
+        assert!(r.c(), "borrow");
     }
 
     // ---- MUL / DIV ----
@@ -1030,7 +1085,7 @@ mod tests {
     fn branch_not_taken() {
         let mut r = cpu();
         r.ram[0] = br_imm(0, 1, 0, 5); // cond Z, Z=false -> not taken
-        r.z = false;
+        r.flags.remove(Flags::Z);
         r.single_step();
         assert_eq!(r.pc, 1);
     }

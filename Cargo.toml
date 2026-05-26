@@ -27,6 +27,10 @@ frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap", "dep:thise
 cosim = ["dep:cc"]
 
 [dependencies]
+# Core: the four ALU status flags as a typed set (macro_rules-based, no proc-macro
+# deps, so the --no-default-features core build stays lean).
+bitflags = "2"
+
 # Pinned as a known-good trio: winit 0.30 + softbuffer 0.4 share raw-window-handle 0.6.
 winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }

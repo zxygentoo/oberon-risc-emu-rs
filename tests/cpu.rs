@@ -120,7 +120,7 @@ fn boot_matches_c_reference() {
             let fb_hash = fnv1a(risc.framebuffer()[..words].iter().copied());
 
             let s = risc.cpu_state();
-            let flags = s.z as u32 | (s.n as u32) << 1 | (s.c as u32) << 2 | (s.v as u32) << 3;
+            let flags = u32::from(s.flags.bits());
             let state = std::iter::once(s.pc).chain(s.r).chain([s.h, flags]);
             let state_hash = fnv1a(state);
 

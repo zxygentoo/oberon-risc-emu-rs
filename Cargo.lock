@@ -937,6 +937,7 @@ name = "oberon-risc-emu"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "bitflags 2.11.1",
  "cc",
  "clap",
  "libc",

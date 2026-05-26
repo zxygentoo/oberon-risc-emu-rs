@@ -20,3 +20,6 @@ pub mod serial;
 
 #[cfg(feature = "frontend")]
 pub mod frontend;
+
+#[cfg(feature = "cosim")]
+pub mod cosim;

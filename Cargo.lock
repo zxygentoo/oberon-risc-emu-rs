@@ -937,6 +937,7 @@ name = "oberon-risc-emu"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "cc",
  "clap",
  "libc",
  "softbuffer",

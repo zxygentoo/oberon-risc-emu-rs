@@ -20,10 +20,11 @@ default = ["frontend"]
 # The GUI stack. `cargo test --no-default-features` builds the pure core alone
 # (fast, no windowing/clipboard system libs) for headless CI.
 frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap"]
-# Differential co-simulation against the C reference (compiles risc.c via a
-# `cc` build-dependency and links it for FFI). Opt-in; needs a C toolchain and
-# the sibling C repo. Wired in a later milestone; see build.rs and tests/cosim.rs.
-cosim = []
+# Differential co-simulation: compiles the C reference (risc.c + risc-fp.c +
+# disk.c via cosim/shim.c) and links it for live FFI comparison. Opt-in; needs a
+# C toolchain and the sibling C repo (path via OBERON_C_SRC). See build.rs,
+# src/cosim.rs, tests/cosim.rs.
+cosim = ["dep:cc"]
 
 [dependencies]
 # Pinned as a known-good trio: winit 0.30 + softbuffer 0.4 share raw-window-handle 0.6.
@@ -36,3 +37,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 # present transitively via winit.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[build-dependencies]
+# Compiles the C reference shim for the `cosim` feature only.
+cc = { version = "1", optional = true }

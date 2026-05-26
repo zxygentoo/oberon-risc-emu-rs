@@ -614,6 +614,44 @@ impl Default for Risc {
     }
 }
 
+/// State injection/extraction + raw stepping for differential testing against
+/// the C reference. Only present under the `cosim` feature so the normal public
+/// API stays clean.
+#[cfg(feature = "cosim")]
+impl Risc {
+    /// State vector: `[PC, R0..R15, H, flags]`, flags = `Z|N<<1|C<<2|V<<3`.
+    pub fn cosim_set_state(&mut self, st: &[u32; 19]) {
+        self.pc = st[0];
+        self.r.copy_from_slice(&st[1..17]);
+        self.h = st[17];
+        let f = st[18];
+        self.z = f & 1 != 0;
+        self.n = f & 2 != 0;
+        self.c = f & 4 != 0;
+        self.v = f & 8 != 0;
+    }
+
+    pub fn cosim_dump_state(&self) -> [u32; 19] {
+        let mut st = [0u32; 19];
+        st[0] = self.pc;
+        st[1..17].copy_from_slice(&self.r);
+        st[17] = self.h;
+        st[18] = self.z as u32 | (self.n as u32) << 1 | (self.c as u32) << 2 | (self.v as u32) << 3;
+        st
+    }
+
+    pub fn cosim_ram_read(&self, word: usize) -> u32 {
+        self.ram[word]
+    }
+    pub fn cosim_ram_write(&mut self, word: usize, value: u32) {
+        self.ram[word] = value;
+    }
+
+    pub fn cosim_step(&mut self) {
+        self.single_step();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

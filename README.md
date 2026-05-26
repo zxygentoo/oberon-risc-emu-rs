@@ -26,13 +26,15 @@ alone — without the windowing/clipboard system libs — with
 
 ## Running
 
-You need a Project Oberon disk image. The upstream project distributes them under
-[`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage);
-fetch one (e.g. `Oberon-2020-08-18.dsk`) and pass it as the argument:
+A Project Oberon disk image is bundled under [`DiskImage/`](DiskImage); boot it
+directly:
 
 ```sh
-cargo run --release -- path/to/Oberon-2020-08-18.dsk
+cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 ```
+
+Other dated images are available upstream under
+[`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
 
 Options (mirroring the C emulator):
 
@@ -68,10 +70,11 @@ cargo test -p risc-core  # pure core alone, no GUI deps
 The floating-point routines are checked against ~15k vectors generated from the C
 reference (`crates/risc-core/tests/data/fp_vectors.txt`). The boot tests in
 `crates/risc-core/tests/cpu.rs` are gated on the `OBERON_DISK` environment
-variable (a path to a `.dsk`), since no image is committed:
+variable (a path to a `.dsk`) — point it at the bundled image. Use an absolute
+path, since `cargo test` runs each crate's tests from its own directory:
 
 ```sh
-OBERON_DISK=path/to/Oberon-2020-08-18.dsk cargo test
+OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" cargo test
 ```
 
 With it set, `boots_to_a_live_framebuffer` drives a headless boot and checks the
@@ -88,7 +91,7 @@ and links it for live comparison. It needs a C toolchain and the sibling C repo:
 
 ```sh
 OBERON_C_SRC=/path/to/oberon-risc-emu/src \
-OBERON_DISK=/path/to/Oberon-2020-08-18.dsk \
+OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" \
   cargo test -p risc-core --release --features cosim
 ```
 
@@ -102,3 +105,7 @@ at every frame. Iteration counts are tunable via `COSIM_FP_ITERS` /
 ## License
 
 MIT, matching the upstream project. See [LICENSE](LICENSE).
+
+The bundled `DiskImage/` disk image is Project Oberon system software, included
+for convenience from the upstream distribution; it is the work of its original
+authors and is not covered by this repository's MIT license.

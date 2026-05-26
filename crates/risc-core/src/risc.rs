@@ -21,23 +21,155 @@ const ROM_START: u32 = 0xFFFF_F800;
 const ROM_WORDS: usize = 512;
 const IO_START: u32 = 0xFFFF_FFC0;
 
-// Register-instruction opcodes (the C's anonymous enum).
-const MOV: u32 = 0;
-const LSL: u32 = 1;
-const ASR: u32 = 2;
-const ROR: u32 = 3;
-const AND: u32 = 4;
-const ANN: u32 = 5;
-const IOR: u32 = 6;
-const XOR: u32 = 7;
-const ADD: u32 = 8;
-const SUB: u32 = 9;
-const MUL: u32 = 10;
-const DIV: u32 = 11;
-const FAD: u32 = 12;
-const FSB: u32 = 13;
-const FML: u32 = 14;
-const FDV: u32 = 15;
+/// A register-instruction opcode: the 4-bit `op` field (the C's anonymous enum).
+/// Discriminants are the opcode values, so dispatch is exhaustive and the test
+/// encoder can use the variants directly.
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum Op {
+    Mov = 0,
+    Lsl,
+    Asr,
+    Ror,
+    And,
+    Ann,
+    Ior,
+    Xor,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Fad,
+    Fsb,
+    Fml,
+    Fdv,
+}
+
+impl Op {
+    /// Decode the 4-bit opcode field. The argument is `(ir >> 16) & 0xF`, so all
+    /// 16 values map to a variant.
+    fn from_u4(v: u32) -> Op {
+        match v {
+            0 => Op::Mov,
+            1 => Op::Lsl,
+            2 => Op::Asr,
+            3 => Op::Ror,
+            4 => Op::And,
+            5 => Op::Ann,
+            6 => Op::Ior,
+            7 => Op::Xor,
+            8 => Op::Add,
+            9 => Op::Sub,
+            10 => Op::Mul,
+            11 => Op::Div,
+            12 => Op::Fad,
+            13 => Op::Fsb,
+            14 => Op::Fml,
+            _ => Op::Fdv,
+        }
+    }
+}
+
+/// A branch condition: the 3-bit `cc` field, under its ISA mnemonic. The branch
+/// is taken when [`Cond::holds`], optionally inverted by the negate bit.
+#[derive(Clone, Copy)]
+enum Cond {
+    Mi,   // negative
+    Eq,   // zero
+    Cs,   // carry set
+    Vs,   // overflow
+    Ls,   // lower or same (C | Z)
+    Lt,   // less than (N != V)
+    Le,   // less or equal ((N != V) | Z)
+    True, // always
+}
+
+impl Cond {
+    /// Decode the 3-bit condition field. The argument is `(ir >> 24) & 7`, so
+    /// all 8 values map to a variant.
+    fn from_u3(v: u32) -> Cond {
+        match v {
+            0 => Cond::Mi,
+            1 => Cond::Eq,
+            2 => Cond::Cs,
+            3 => Cond::Vs,
+            4 => Cond::Ls,
+            5 => Cond::Lt,
+            6 => Cond::Le,
+            _ => Cond::True,
+        }
+    }
+
+    /// Whether the (un-negated) condition holds for the given flags.
+    fn holds(self, f: Flags) -> bool {
+        let (n, z, c, v) = (
+            f.contains(Flags::N),
+            f.contains(Flags::Z),
+            f.contains(Flags::C),
+            f.contains(Flags::V),
+        );
+        match self {
+            Cond::Mi => n,
+            Cond::Eq => z,
+            Cond::Cs => c,
+            Cond::Vs => v,
+            Cond::Ls => c | z,
+            Cond::Lt => n ^ v,
+            Cond::Le => (n ^ v) | z,
+            Cond::True => true,
+        }
+    }
+}
+
+// Instruction-class selector bits in the top nibble of every instruction.
+const PBIT: u32 = 0x8000_0000;
+const QBIT: u32 = 0x4000_0000;
+const UBIT: u32 = 0x2000_0000;
+const VBIT: u32 = 0x1000_0000;
+
+bitflags::bitflags! {
+    /// The four ALU status flags. Bit positions match the `CpuState` / cosim
+    /// packing (`Z | N<<1 | C<<2 | V<<3`), so state round-trips as `flags.bits()`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Flags: u8 {
+        const Z = 1 << 0;
+        const N = 1 << 1;
+        const C = 1 << 2;
+        const V = 1 << 3;
+    }
+}
+
+/// A byte address in the 32-bit address space (a memory operand or IO register).
+/// Kept distinct from [`WordAddr`] so the `/ 4` (word index) and `% 4` (byte
+/// offset) conversions are explicit and unmixable at the load/store boundary.
+#[derive(Clone, Copy)]
+struct ByteAddr(u32);
+
+/// A word (4-byte) index into RAM or ROM.
+#[derive(Clone, Copy)]
+struct WordAddr(u32);
+
+impl ByteAddr {
+    /// The index of the word containing this address (`/ 4`).
+    fn word(self) -> WordAddr {
+        WordAddr(self.0 / 4)
+    }
+    /// This address's byte offset within its word (`% 4`, in `0..4`).
+    fn byte_in_word(self) -> u32 {
+        self.0 % 4
+    }
+}
+
+impl WordAddr {
+    /// The byte address of this word's first byte (`* 4`).
+    fn byte(self) -> ByteAddr {
+        ByteAddr(self.0.wrapping_mul(4))
+    }
+    /// As a slice index into RAM or ROM.
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 /// A damaged (dirty) rectangle of the framebuffer, in framebuffer-word columns
 /// and line rows. `y1 > y2` means "nothing damaged".
@@ -56,10 +188,7 @@ pub struct CpuState {
     pub pc: u32,
     pub r: [u32; 16],
     pub h: u32,
-    pub z: bool,
-    pub n: bool,
-    pub c: bool,
-    pub v: bool,
+    pub flags: Flags,
 }
 
 /// The RISC5 machine: CPU registers, RAM/ROM, and attached devices.
@@ -67,10 +196,7 @@ pub struct Risc {
     pc: u32,
     r: [u32; 16],
     h: u32,
-    z: bool,
-    n: bool,
-    c: bool,
-    v: bool,
+    flags: Flags,
 
     mem_size: u32,
     display_start: u32,
@@ -106,10 +232,7 @@ impl Risc {
             pc: 0,
             r: [0; 16],
             h: 0,
-            z: false,
-            n: false,
-            c: false,
-            v: false,
+            flags: Flags::empty(),
             mem_size: DEFAULT_MEM_SIZE,
             display_start: DEFAULT_DISPLAY_START,
             progress: 0,
@@ -234,11 +357,6 @@ impl Risc {
         };
         self.pc = self.pc.wrapping_add(1);
 
-        const PBIT: u32 = 0x8000_0000;
-        const QBIT: u32 = 0x4000_0000;
-        const UBIT: u32 = 0x2000_0000;
-        const VBIT: u32 = 0x1000_0000;
-
         if ir & PBIT == 0 {
             // Register instructions.
             let a = (ir & 0x0F00_0000) >> 24;
@@ -256,48 +374,55 @@ impl Risc {
                 0xFFFF_0000 | im
             };
 
-            let a_val: u32 = match op {
-                MOV => {
+            let a_val: u32 = match Op::from_u4(op) {
+                Op::Mov => {
                     if ir & UBIT == 0 {
                         c_val
                     } else if ir & QBIT != 0 {
                         c_val << 16
                     } else if ir & VBIT != 0 {
-                        0xD0 // ???
-                            | ((self.n as u32) << 31)
-                            | ((self.z as u32) << 30)
-                            | ((self.c as u32) << 29)
-                            | ((self.v as u32) << 28)
+                        // Reading the flags: the low byte is the hardware's
+                        // CPU-id/version field 0x50 (RISC5.v:139). The C
+                        // reference deliberately emits 0xD0 instead; we follow
+                        // the hardware. This is the one intentional divergence
+                        // from the C oracle (see DIVERGENCES.md) and is inert to
+                        // the boot, which never reads this byte.
+                        0x50 | (u32::from(self.flags.contains(Flags::N)) << 31)
+                            | (u32::from(self.flags.contains(Flags::Z)) << 30)
+                            | (u32::from(self.flags.contains(Flags::C)) << 29)
+                            | (u32::from(self.flags.contains(Flags::V)) << 28)
                     } else {
                         self.h
                     }
                 }
-                LSL => b_val.wrapping_shl(c_val & 31),
-                ASR => ((b_val as i32) >> (c_val & 31)) as u32,
-                ROR => b_val.rotate_right(c_val & 31),
-                AND => b_val & c_val,
-                ANN => b_val & !c_val,
-                IOR => b_val | c_val,
-                XOR => b_val ^ c_val,
-                ADD => {
+                Op::Lsl => b_val.wrapping_shl(c_val & 31),
+                Op::Asr => ((b_val as i32) >> (c_val & 31)) as u32,
+                Op::Ror => b_val.rotate_right(c_val & 31),
+                Op::And => b_val & c_val,
+                Op::Ann => b_val & !c_val,
+                Op::Ior => b_val | c_val,
+                Op::Xor => b_val ^ c_val,
+                Op::Add => {
                     let mut a_val = b_val.wrapping_add(c_val);
                     if ir & UBIT != 0 {
-                        a_val = a_val.wrapping_add(self.c as u32);
+                        a_val = a_val.wrapping_add(u32::from(self.flags.contains(Flags::C)));
                     }
-                    self.c = a_val < b_val;
-                    self.v = (((a_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
+                    self.flags.set(Flags::C, a_val < b_val);
+                    self.flags
+                        .set(Flags::V, (((a_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0);
                     a_val
                 }
-                SUB => {
+                Op::Sub => {
                     let mut a_val = b_val.wrapping_sub(c_val);
                     if ir & UBIT != 0 {
-                        a_val = a_val.wrapping_sub(self.c as u32);
+                        a_val = a_val.wrapping_sub(u32::from(self.flags.contains(Flags::C)));
                     }
-                    self.c = a_val > b_val;
-                    self.v = (((b_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0;
+                    self.flags.set(Flags::C, a_val > b_val);
+                    self.flags
+                        .set(Flags::V, (((b_val ^ c_val) & (a_val ^ b_val)) >> 31) != 0);
                     a_val
                 }
-                MUL => {
+                Op::Mul => {
                     let tmp: u64 = if ir & UBIT == 0 {
                         ((b_val as i32 as i64) * (c_val as i32 as i64)) as u64
                     } else {
@@ -306,7 +431,7 @@ impl Risc {
                     self.h = (tmp >> 32) as u32;
                     tmp as u32
                 }
-                DIV => {
+                Op::Div => {
                     if (c_val as i32) > 0 {
                         if ir & UBIT == 0 {
                             let mut a_val = ((b_val as i32) / (c_val as i32)) as u32;
@@ -326,11 +451,10 @@ impl Risc {
                         q.quot
                     }
                 }
-                FAD => fp_add(b_val, c_val, ir & UBIT != 0, ir & VBIT != 0),
-                FSB => fp_add(b_val, c_val ^ 0x8000_0000, ir & UBIT != 0, ir & VBIT != 0),
-                FML => fp_mul(b_val, c_val),
-                FDV => fp_div(b_val, c_val),
-                _ => unreachable!(),
+                Op::Fad => fp_add(b_val, c_val, ir & UBIT != 0, ir & VBIT != 0),
+                Op::Fsb => fp_add(b_val, c_val ^ 0x8000_0000, ir & UBIT != 0, ir & VBIT != 0),
+                Op::Fml => fp_mul(b_val, c_val),
+                Op::Fdv => fp_div(b_val, c_val),
             };
             self.set_register(a, a_val);
         } else if ir & QBIT == 0 {
@@ -340,7 +464,7 @@ impl Risc {
             let off = (ir & 0x000F_FFFF) as i32;
             let off = (off ^ 0x0008_0000) - 0x0008_0000; // sign-extend 20-bit
 
-            let address = self.r[b as usize].wrapping_add(off as u32);
+            let address = ByteAddr(self.r[b as usize].wrapping_add(off as u32));
             if ir & UBIT == 0 {
                 let a_val = if ir & VBIT == 0 {
                     self.load_word(address)
@@ -354,26 +478,18 @@ impl Risc {
                 self.store_byte(address, self.r[a as usize] as u8);
             }
         } else {
-            // Branch instructions.
-            let mut t = ((ir >> 27) & 1) != 0;
-            match (ir >> 24) & 7 {
-                0 => t ^= self.n,
-                1 => t ^= self.z,
-                2 => t ^= self.c,
-                3 => t ^= self.v,
-                4 => t ^= self.c | self.z,
-                5 => t ^= self.n ^ self.v,
-                6 => t ^= (self.n ^ self.v) | self.z,
-                7 => t ^= true,
-                _ => unreachable!(),
-            }
+            // Branch instructions. Bit 27 negates the condition.
+            let negate = ((ir >> 27) & 1) != 0;
+            let t = negate ^ Cond::from_u3((ir >> 24) & 7).holds(self.flags);
             if t {
                 if ir & VBIT != 0 {
-                    self.set_register(15, self.pc.wrapping_mul(4));
+                    // The link register holds the return point as a byte address.
+                    self.set_register(15, WordAddr(self.pc).byte().0);
                 }
                 if ir & UBIT == 0 {
+                    // Register-indirect: the register holds a byte address.
                     let c = ir & 0x0000_000F;
-                    self.pc = self.r[c as usize] / 4;
+                    self.pc = ByteAddr(self.r[c as usize]).word().0;
                 } else {
                     let off = (ir & 0x00FF_FFFF) as i32;
                     let off = (off ^ 0x0080_0000) - 0x0080_0000; // sign-extend 24-bit
@@ -385,21 +501,21 @@ impl Risc {
 
     fn set_register(&mut self, reg: u32, value: u32) {
         self.r[reg as usize] = value;
-        self.z = value == 0;
-        self.n = (value as i32) < 0;
+        self.flags.set(Flags::Z, value == 0);
+        self.flags.set(Flags::N, (value as i32) < 0);
     }
 
-    fn load_word(&mut self, address: u32) -> u32 {
-        if address < self.mem_size {
-            self.ram[(address / 4) as usize]
+    fn load_word(&mut self, addr: ByteAddr) -> u32 {
+        if addr.0 < self.mem_size {
+            self.ram[addr.word().index()]
         } else {
-            self.load_io(address)
+            self.load_io(addr.0)
         }
     }
 
-    fn load_byte(&mut self, address: u32) -> u8 {
-        let w = self.load_word(address);
-        (w >> (address % 4 * 8)) as u8
+    fn load_byte(&mut self, addr: ByteAddr) -> u8 {
+        let w = self.load_word(addr);
+        (w >> (addr.byte_in_word() * 8)) as u8
     }
 
     fn update_damage(&mut self, w: i32) {
@@ -421,26 +537,27 @@ impl Risc {
         }
     }
 
-    fn store_word(&mut self, address: u32, value: u32) {
-        if address < self.display_start {
-            self.ram[(address / 4) as usize] = value;
-        } else if address < self.mem_size {
-            self.ram[(address / 4) as usize] = value;
-            self.update_damage((address / 4 - self.display_start / 4) as i32);
+    fn store_word(&mut self, addr: ByteAddr, value: u32) {
+        if addr.0 < self.display_start {
+            self.ram[addr.word().index()] = value;
+        } else if addr.0 < self.mem_size {
+            self.ram[addr.word().index()] = value;
+            let fb_word0 = ByteAddr(self.display_start).word();
+            self.update_damage((addr.word().0 - fb_word0.0) as i32);
         } else {
-            self.store_io(address, value);
+            self.store_io(addr.0, value);
         }
     }
 
-    fn store_byte(&mut self, address: u32, value: u8) {
-        if address < self.mem_size {
-            let mut w = self.load_word(address);
-            let shift = (address & 3) * 8;
+    fn store_byte(&mut self, addr: ByteAddr, value: u8) {
+        if addr.0 < self.mem_size {
+            let mut w = self.load_word(addr);
+            let shift = addr.byte_in_word() * 8;
             w &= !(0xFFu32 << shift);
             w |= (value as u32) << shift;
-            self.store_word(address, w);
+            self.store_word(addr, w);
         } else {
-            self.store_io(address, value as u32);
+            self.store_io(addr.0, value as u32);
         }
     }
 
@@ -479,7 +596,7 @@ impl Risc {
                 if self.key_cnt > 0 {
                     let scancode = self.key_buf[0];
                     self.key_cnt -= 1;
-                    self.key_buf.copy_within(1..1 + self.key_cnt as usize, 0);
+                    self.key_buf.copy_within(1..=(self.key_cnt as usize), 0);
                     scancode as u32
                 } else {
                     0
@@ -568,7 +685,7 @@ impl Risc {
 
     /// The framebuffer words, starting at `display_start`. Port of `risc_get_framebuffer_ptr`.
     pub fn framebuffer(&self) -> &[u32] {
-        &self.ram[(self.display_start / 4) as usize..]
+        &self.ram[ByteAddr(self.display_start).word().index()..]
     }
 
     /// Take the accumulated damage rectangle and reset it to empty. Port of
@@ -600,10 +717,7 @@ impl Risc {
             pc: self.pc,
             r: self.r,
             h: self.h,
-            z: self.z,
-            n: self.n,
-            c: self.c,
-            v: self.v,
+            flags: self.flags,
         }
     }
 }
@@ -624,11 +738,7 @@ impl Risc {
         self.pc = st[0];
         self.r.copy_from_slice(&st[1..17]);
         self.h = st[17];
-        let f = st[18];
-        self.z = f & 1 != 0;
-        self.n = f & 2 != 0;
-        self.c = f & 4 != 0;
-        self.v = f & 8 != 0;
+        self.flags = Flags::from_bits_truncate(st[18] as u8);
     }
 
     pub fn cosim_dump_state(&self) -> [u32; 19] {
@@ -636,7 +746,7 @@ impl Risc {
         st[0] = self.pc;
         st[1..17].copy_from_slice(&self.r);
         st[17] = self.h;
-        st[18] = self.z as u32 | (self.n as u32) << 1 | (self.c as u32) << 2 | (self.v as u32) << 3;
+        st[18] = u32::from(self.flags.bits());
         st
     }
 
@@ -658,10 +768,16 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    // The opcodes under their ISA mnemonics, for terse instruction encoding.
+    use super::Op::{
+        Add as ADD, And as AND, Ann as ANN, Asr as ASR, Div as DIV, Fsb as FSB, Ior as IOR,
+        Lsl as LSL, Mov as MOV, Mul as MUL, Ror as ROR, Sub as SUB, Xor as XOR,
+    };
+
     /// Encode a register-format instruction. `ci` is the c register index (when
     /// `q == 0`) or the 16-bit immediate (when `q == 1`).
-    fn reg(q: u32, u: u32, v: u32, a: u32, b: u32, op: u32, ci: u32) -> u32 {
-        (q << 30) | (u << 29) | (v << 28) | (a << 24) | (b << 20) | (op << 16) | ci
+    fn reg(q: u32, u: u32, v: u32, a: u32, b: u32, op: Op, ci: u32) -> u32 {
+        (q << 30) | (u << 29) | (v << 28) | (a << 24) | (b << 20) | ((op as u32) << 16) | ci
     }
     /// Encode a memory-format instruction. `u`: 0 = load, 1 = store. `v`: 0 = word, 1 = byte.
     fn mem(u: u32, v: u32, a: u32, b: u32, off: u32) -> u32 {
@@ -683,6 +799,22 @@ mod tests {
         r
     }
 
+    // Terse flag accessors for the assertions below.
+    impl Risc {
+        fn z(&self) -> bool {
+            self.flags.contains(Flags::Z)
+        }
+        fn n(&self) -> bool {
+            self.flags.contains(Flags::N)
+        }
+        fn c(&self) -> bool {
+            self.flags.contains(Flags::C)
+        }
+        fn v(&self) -> bool {
+            self.flags.contains(Flags::V)
+        }
+    }
+
     // ---- MOV ----
 
     #[test]
@@ -691,7 +823,7 @@ mod tests {
         r.ram[0] = reg(1, 0, 0, 1, 0, MOV, 0x1234);
         r.single_step();
         assert_eq!(r.r[1], 0x1234);
-        assert!(!r.z && !r.n);
+        assert!(!r.z() && !r.n());
         assert_eq!(r.pc, 1);
     }
 
@@ -702,7 +834,7 @@ mod tests {
         r.ram[0] = reg(1, 0, 1, 1, 0, MOV, 0x8000);
         r.single_step();
         assert_eq!(r.r[1], 0xFFFF_8000);
-        assert!(r.n && !r.z);
+        assert!(r.n() && !r.z());
     }
 
     #[test]
@@ -724,14 +856,17 @@ mod tests {
     }
 
     #[test]
-    fn mov_flags_quirk() {
+    fn mov_flags_read_is_hardware_0x50() {
+        // MOV q=0, u=1, v=1 reads the flags: N/Z/C/V in the top nibble over the
+        // hardware's 0x50 CPU-id byte (RISC5.v:139). The C reference emits 0xD0
+        // there; this is our one intentional divergence (DIVERGENCES.md), and
+        // since the differential fuzzer can't oracle it, this is its only guard.
         let mut r = cpu();
-        // q=0, u=1, v=1 -> 0xD0 | NZCV.
         r.ram[0] = reg(0, 1, 1, 1, 0, MOV, 0);
-        r.n = true;
-        r.c = true;
+        r.flags.insert(Flags::N);
+        r.flags.insert(Flags::C);
         r.single_step();
-        assert_eq!(r.r[1], 0xD0 | 0x8000_0000 | 0x2000_0000);
+        assert_eq!(r.r[1], 0x50 | 0x8000_0000 | 0x2000_0000);
     }
 
     #[test]
@@ -789,7 +924,7 @@ mod tests {
             r.r[2] = 0x0F00;
             r.r[3] = 0x00F0;
             r.single_step();
-            assert_eq!(r.r[1], want, "op {op}");
+            assert_eq!(r.r[1], want, "op {op:?}");
         }
     }
 
@@ -803,9 +938,9 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0x8000_0000);
-        assert!(r.v, "signed overflow");
-        assert!(!r.c, "no unsigned carry");
-        assert!(r.n && !r.z);
+        assert!(r.v(), "signed overflow");
+        assert!(!r.c(), "no unsigned carry");
+        assert!(r.n() && !r.z());
     }
 
     #[test]
@@ -816,9 +951,9 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0);
-        assert!(r.c, "unsigned carry");
-        assert!(!r.v);
-        assert!(r.z && !r.n);
+        assert!(r.c(), "unsigned carry");
+        assert!(!r.v());
+        assert!(r.z() && !r.n());
     }
 
     #[test]
@@ -827,7 +962,7 @@ mod tests {
         r.ram[0] = reg(0, 1, 0, 1, 2, ADD, 3); // u=1 -> add carry
         r.r[2] = 1;
         r.r[3] = 1;
-        r.c = true;
+        r.flags.insert(Flags::C);
         r.single_step();
         assert_eq!(r.r[1], 3);
     }
@@ -840,8 +975,8 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0x7FFF_FFFF);
-        assert!(r.v, "signed overflow");
-        assert!(!r.c);
+        assert!(r.v(), "signed overflow");
+        assert!(!r.c());
     }
 
     #[test]
@@ -852,7 +987,7 @@ mod tests {
         r.r[3] = 1;
         r.single_step();
         assert_eq!(r.r[1], 0xFFFF_FFFF);
-        assert!(r.c, "borrow");
+        assert!(r.c(), "borrow");
     }
 
     // ---- MUL / DIV ----
@@ -954,9 +1089,9 @@ mod tests {
     fn store_byte_rmw_little_endian() {
         let mut r = cpu();
         r.ram[0x40] = 0x1122_3344; // address 0x100
-        r.store_byte(0x100, 0xAB);
+        r.store_byte(ByteAddr(0x100), 0xAB);
         assert_eq!(r.ram[0x40], 0x1122_33AB, "low byte replaced, others kept");
-        r.store_byte(0x102, 0xEE);
+        r.store_byte(ByteAddr(0x102), 0xEE);
         assert_eq!(r.ram[0x40], 0x11EE_33AB, "byte 2 replaced");
     }
 
@@ -964,10 +1099,10 @@ mod tests {
     fn load_byte_little_endian() {
         let mut r = cpu();
         r.ram[0x40] = 0x1122_3344;
-        assert_eq!(r.load_byte(0x100), 0x44);
-        assert_eq!(r.load_byte(0x101), 0x33);
-        assert_eq!(r.load_byte(0x102), 0x22);
-        assert_eq!(r.load_byte(0x103), 0x11);
+        assert_eq!(r.load_byte(ByteAddr(0x100)), 0x44);
+        assert_eq!(r.load_byte(ByteAddr(0x101)), 0x33);
+        assert_eq!(r.load_byte(ByteAddr(0x102)), 0x22);
+        assert_eq!(r.load_byte(ByteAddr(0x103)), 0x11);
     }
 
     // ---- Branches ----
@@ -993,7 +1128,7 @@ mod tests {
     fn branch_not_taken() {
         let mut r = cpu();
         r.ram[0] = br_imm(0, 1, 0, 5); // cond Z, Z=false -> not taken
-        r.z = false;
+        r.flags.remove(Flags::Z);
         r.single_step();
         assert_eq!(r.pc, 1);
     }
@@ -1030,7 +1165,7 @@ mod tests {
     fn store_to_display_marks_damage() {
         let mut r = cpu();
         let _ = r.framebuffer_damage(); // clear initial full-screen damage
-        r.store_word(DEFAULT_DISPLAY_START, 0x0000_00FF);
+        r.store_word(ByteAddr(DEFAULT_DISPLAY_START), 0x0000_00FF);
         let d = r.framebuffer_damage();
         assert_eq!(
             d,

@@ -117,40 +117,6 @@ impl Clipboard for ClipboardBridge {
     }
 }
 
-/// The `arboard`-backed host clipboard used by the frontend.
-#[cfg(feature = "frontend")]
-pub struct ArboardClipboard {
-    inner: Option<arboard::Clipboard>,
-}
-
-#[cfg(feature = "frontend")]
-impl ArboardClipboard {
-    pub fn new() -> Self {
-        ArboardClipboard {
-            inner: arboard::Clipboard::new().ok(),
-        }
-    }
-}
-
-#[cfg(feature = "frontend")]
-impl Default for ArboardClipboard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(feature = "frontend")]
-impl HostClipboard for ArboardClipboard {
-    fn get_text(&mut self) -> Option<String> {
-        self.inner.as_mut()?.get_text().ok()
-    }
-    fn set_text(&mut self, text: &str) {
-        if let Some(c) = self.inner.as_mut() {
-            let _ = c.set_text(text.to_owned());
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

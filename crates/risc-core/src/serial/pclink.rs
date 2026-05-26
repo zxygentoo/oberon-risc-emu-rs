@@ -1,4 +1,4 @@
-//! PCLink file transfer over the serial line (port of `pclink.c`).
+//! `PCLink` file transfer over the serial line (port of `pclink.c`).
 //!
 //! Watches for two job files (`PCLink.REC`, naming a host file to send *to*
 //! Oberon, and `PCLink.SND`, naming a host file to receive *from* Oberon),
@@ -126,7 +126,7 @@ impl Serial for PcLink {
                 }
             }
         }
-        2 + if self.mode != 0 { 1 } else { 0 } // bit1: xmit ready; bit0: active
+        2 + u32::from(self.mode != 0) // bit1: xmit ready; bit0: active
     }
 
     fn read_data(&mut self) -> u32 {
@@ -192,7 +192,7 @@ impl Serial for PcLink {
                 let lim = self.buf[0] as usize;
                 if pos == lim {
                     if let Some(f) = self.file.as_mut() {
-                        let _ = f.write_all(&self.buf[1..1 + lim]);
+                        let _ = f.write_all(&self.buf[1..=lim]);
                     }
                     if lim < 255 {
                         self.flen = 0;

@@ -3,14 +3,21 @@
 
 use std::path::PathBuf;
 
-use clap::Parser;
+use clap::{Args, Parser, Subcommand};
+
+use crate::error::{Error, Result};
 
 const MAX_DIM: i32 = 2048;
 
-/// `risc [OPTIONS...] DISK-IMAGE`
+/// `risc [OPTIONS...] DISK-IMAGE` — or `risc headless ...`.
 #[derive(Parser, Debug)]
 #[command(name = "risc", about = "A Project Oberon RISC5 emulator", version)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
+    /// Subcommand; with none, `risc DISK-IMAGE` opens the windowed emulator.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// Scale the display in windowed mode
     #[arg(long, value_name = "REAL")]
     zoom: Option<f64>,
@@ -47,6 +54,30 @@ pub struct Cli {
     disk_image: Option<PathBuf>,
 }
 
+/// Subcommands. With none, `risc` runs the windowed emulator.
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Boot headless (no window) for N frames and optionally print FNV-1a hashes
+    /// of the framebuffer and CPU state — for deterministic CI checks and golden
+    /// regeneration.
+    Headless(HeadlessArgs),
+}
+
+/// Arguments for the `headless` subcommand.
+#[derive(Args, Debug)]
+pub struct HeadlessArgs {
+    /// Number of 60 Hz frames to run.
+    #[arg(long, default_value_t = 250)]
+    pub frames: u32,
+
+    /// Print FNV-1a hashes of the framebuffer and CPU state.
+    #[arg(long)]
+    pub hash: bool,
+
+    #[arg(value_name = "DISK-IMAGE")]
+    pub disk_image: PathBuf,
+}
+
 /// Validated configuration handed to the frontend.
 pub struct Config {
     pub width: u32,
@@ -65,18 +96,20 @@ pub struct Config {
 impl Cli {
     /// Validate options and resolve defaults, mirroring `main`'s argument
     /// handling.
-    pub fn into_config(self) -> Result<Config, String> {
-        let mut width = crate::risc::FRAMEBUFFER_WIDTH as i32;
-        let mut height = crate::risc::FRAMEBUFFER_HEIGHT as i32;
+    pub fn into_config(self) -> Result<Config> {
+        let mut width = risc_core::risc::FRAMEBUFFER_WIDTH as i32;
+        let mut height = risc_core::risc::FRAMEBUFFER_HEIGHT as i32;
         let size_option = self.size.is_some();
         if let Some(s) = &self.size {
             let (w, h) = parse_size(s)?;
-            width = w.clamp(32, MAX_DIM) & !31;
+            width = w.clamp(32, MAX_DIM) & !31; // round down to a multiple of 32
             height = h.clamp(32, MAX_DIM);
         }
 
         if self.disk_image.is_none() && !self.boot_from_serial {
-            return Err("a DISK-IMAGE is required (or pass --boot-from-serial)".into());
+            return Err(Error::Config(
+                "a DISK-IMAGE is required (or pass --boot-from-serial)".into(),
+            ));
         }
 
         let mem = self.mem.unwrap_or(0);
@@ -96,18 +129,18 @@ impl Cli {
     }
 }
 
-fn parse_size(s: &str) -> Result<(i32, i32), String> {
+fn parse_size(s: &str) -> Result<(i32, i32)> {
     let (w, h) = s
         .split_once(['x', 'X'])
-        .ok_or_else(|| format!("invalid --size {s:?}, expected WIDTHxHEIGHT"))?;
+        .ok_or_else(|| Error::Config(format!("invalid --size {s:?}, expected WIDTHxHEIGHT")))?;
     let w = w
         .trim()
         .parse::<i32>()
-        .map_err(|_| format!("invalid width in --size {s:?}"))?;
+        .map_err(|_| Error::Config(format!("invalid width in --size {s:?}")))?;
     let h = h
         .trim()
         .parse::<i32>()
-        .map_err(|_| format!("invalid height in --size {s:?}"))?;
+        .map_err(|_| Error::Config(format!("invalid height in --size {s:?}")))?;
     Ok((w, h))
 }
 
@@ -141,5 +174,19 @@ mod tests {
         assert_eq!(cfg.width, 1000 & !31); // 992
         assert_eq!(cfg.height, 700);
         assert!(cfg.configure);
+    }
+
+    #[test]
+    fn headless_subcommand_parses() {
+        let cli = Cli::parse_from(["risc", "headless", "--frames", "42", "--hash", "disk.dsk"]);
+        let Some(Command::Headless(args)) = cli.command else {
+            panic!("expected the headless subcommand");
+        };
+        assert_eq!(args.frames, 42);
+        assert!(args.hash);
+        assert_eq!(args.disk_image, PathBuf::from("disk.dsk"));
+        // A bare disk image still selects the GUI (no subcommand).
+        let cli = Cli::parse_from(["risc", "disk.dsk"]);
+        assert!(cli.command.is_none());
     }
 }

@@ -2,13 +2,15 @@
 //! bilinear scale into the window (port of `update_texture` and `scale_display`
 //! from `sdl-main.c`).
 //!
-//! Strategy (per the plan): keep a persistent native-resolution `u32` texture
-//! (the SDL streaming-texture analog), refresh only the damaged words into it,
-//! then scale the whole texture into the softbuffer surface every present. The
-//! scale is bilinear to match the linear filtering SDL uses (`"best"` scale
-//! quality), which looks far smoother than nearest-neighbour on the 1-bit text.
+//! Strategy: keep a persistent native-resolution `u32` texture (the SDL
+//! streaming-texture analog) and refresh only the damaged words into it. The
+//! bilinear scale (matching SDL's "best"/linear filter, far gentler on 1-bit
+//! text than nearest-neighbour) is the per-frame hot path, so it runs only over
+//! the window region the damage maps to ([`window_dirty`] + [`scale_region`]),
+//! into a persistent window-sized buffer the caller then copies to the surface.
+//! A full rescale ([`scale_into`]) is only needed on resize.
 
-use crate::risc::Risc;
+use risc_core::risc::Risc;
 
 /// Solarized "off"/"on" colours used by the C frontend. softbuffer wants
 /// `0x00RRGGBB`, which these already are.
@@ -26,6 +28,15 @@ pub struct DisplayRect {
     pub w: i32,
     pub h: i32,
     pub scale: f64,
+}
+
+/// A pixel rectangle `[x0, x1) x [y0, y1)` (exclusive upper bounds).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PixelRect {
+    pub x0: usize,
+    pub y0: usize,
+    pub x1: usize,
+    pub y1: usize,
 }
 
 /// Centered, aspect-preserving placement of an `oberon_w` x `oberon_h`
@@ -51,11 +62,17 @@ pub fn scale_display(win_w: u32, win_h: u32, oberon_w: u32, oberon_h: u32) -> Di
 
 /// Refresh the persistent native-resolution `texture` from the framebuffer's
 /// damaged region, expanding each 1-bit word into 32 ARGB pixels (LSB =
-/// leftmost) and flipping the Oberon bottom-up framebuffer to top-down.
-pub fn blit_damage(texture: &mut [u32], risc: &mut Risc, black: u32, white: u32) {
+/// leftmost) and flipping the Oberon bottom-up framebuffer to top-down. Returns
+/// the touched texture-pixel rectangle, or `None` if nothing was damaged.
+pub fn blit_damage(
+    texture: &mut [u32],
+    risc: &mut Risc,
+    black: u32,
+    white: u32,
+) -> Option<PixelRect> {
     let damage = risc.framebuffer_damage();
     if damage.y1 > damage.y2 {
-        return;
+        return None;
     }
     let fb_width = risc.fb_width(); // words per line
     let fb_height = risc.fb_height();
@@ -74,12 +91,34 @@ pub fn blit_damage(texture: &mut [u32], risc: &mut Risc, black: u32, white: u32)
             }
         }
     }
+
+    // Texture-pixel bounds of the touched region (Y-flipped from line rows).
+    Some(PixelRect {
+        x0: (damage.x1 * 32) as usize,
+        x1: ((damage.x2 + 1) * 32) as usize,
+        y0: (fb_height - 1 - damage.y2) as usize,
+        y1: (fb_height - damage.y1) as usize,
+    })
+}
+
+/// Map a damaged texture-pixel rect to the window-pixel rect that must be
+/// re-scaled: widen by one source pixel each way (so the bilinear taps of the
+/// edge output pixels are covered), map through the display rect, and clamp to
+/// the window. Pixels falling in the letterbox are handled as `BORDER` by
+/// [`scale_region`].
+pub fn window_dirty(tex: PixelRect, rect: DisplayRect, win_w: u32, win_h: u32) -> PixelRect {
+    let to_win = |t: usize, off: i32| off as f64 + t as f64 * rect.scale;
+    let clamp = |v: f64, max: u32| v.clamp(0.0, f64::from(max)) as usize;
+    PixelRect {
+        x0: clamp(to_win(tex.x0.saturating_sub(1), rect.x).floor(), win_w),
+        y0: clamp(to_win(tex.y0.saturating_sub(1), rect.y).floor(), win_h),
+        x1: clamp(to_win(tex.x1 + 1, rect.x).ceil(), win_w),
+        y1: clamp(to_win(tex.y1 + 1, rect.y).ceil(), win_h),
+    }
 }
 
 /// Bilinearly scale the whole `texture` into the window-sized `out` buffer,
-/// letterboxing the surrounding border. This matches the linear ("best")
-/// filtering the C frontend asks SDL for, which is far gentler on the eye than
-/// nearest-neighbour for the 1-bit display.
+/// letterboxing the border. Used for the initial paint and after a resize.
 pub fn scale_into(
     out: &mut [u32],
     win_w: u32,
@@ -89,41 +128,78 @@ pub fn scale_into(
     tex_h: usize,
     rect: DisplayRect,
 ) {
-    let inv = 1.0 / rect.scale;
-    let win_w = win_w as usize;
+    let full = PixelRect {
+        x0: 0,
+        y0: 0,
+        x1: win_w as usize,
+        y1: win_h as usize,
+    };
+    scale_region(out, win_w, win_h, texture, tex_w, tex_h, rect, full);
+}
 
-    // Per window column: the two source columns and the horizontal blend weight
-    // (0..256 fixed point), or None outside the display rect. Computed once.
-    let cols: Vec<Option<(usize, usize, u32)>> = (0..win_w as i32)
+/// Bilinearly scale `texture` into the `dirty` window-pixel rect of `out`,
+/// leaving the rest of `out` untouched. This matches the linear ("best")
+/// filtering the C frontend asks SDL for. With `dirty` covering the whole
+/// window this is identical to a full rescale; restricting it to the damaged
+/// span is what keeps the per-frame cost off the full-window bilinear.
+// A leaf pixel routine: window/texture dimensions, placement, and the dirty
+// rect are all genuinely independent inputs, so the arg count is inherent.
+#[allow(clippy::too_many_arguments)]
+pub fn scale_region(
+    out: &mut [u32],
+    win_w: u32,
+    win_h: u32,
+    texture: &[u32],
+    tex_w: usize,
+    tex_h: usize,
+    rect: DisplayRect,
+    dirty: PixelRect,
+) {
+    let win_w = win_w as usize;
+    let win_h = win_h as usize;
+    let x0 = dirty.x0.min(win_w);
+    let x1 = dirty.x1.min(win_w);
+    let y0 = dirty.y0.min(win_h);
+    let y1 = dirty.y1.min(win_h);
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let inv = 1.0 / rect.scale;
+
+    // Per dirty window column: the two source columns and the horizontal blend
+    // weight (0..256 fixed point), or None outside the display rect.
+    let cols: Vec<Option<(usize, usize, u32)>> = (x0..x1)
         .map(|sx| {
+            let sx = sx as i32;
             if sx < rect.x || sx >= rect.x + rect.w {
                 return None;
             }
             let fx = (sx - rect.x) as f64 * inv;
-            let x0 = (fx as usize).min(tex_w - 1);
-            let x1 = (x0 + 1).min(tex_w - 1);
-            Some((x0, x1, ((fx - x0 as f64) * 256.0) as u32))
+            let cx0 = (fx as usize).min(tex_w - 1);
+            let cx1 = (cx0 + 1).min(tex_w - 1);
+            Some((cx0, cx1, ((fx - cx0 as f64) * 256.0) as u32))
         })
         .collect();
 
-    for sy in 0..win_h as i32 {
-        let out_row = &mut out[sy as usize * win_w..sy as usize * win_w + win_w];
-        if sy < rect.y || sy >= rect.y + rect.h {
+    for sy in y0..y1 {
+        let out_row = &mut out[sy * win_w + x0..sy * win_w + x1];
+        let syi = sy as i32;
+        if syi < rect.y || syi >= rect.y + rect.h {
             out_row.fill(BORDER);
             continue;
         }
-        let fy = (sy - rect.y) as f64 * inv;
-        let y0 = (fy as usize).min(tex_h - 1);
-        let y1 = (y0 + 1).min(tex_h - 1);
-        let wy = ((fy - y0 as f64) * 256.0) as u32;
-        let row0 = &texture[y0 * tex_w..y0 * tex_w + tex_w];
-        let row1 = &texture[y1 * tex_w..y1 * tex_w + tex_w];
+        let fy = (syi - rect.y) as f64 * inv;
+        let ry0 = (fy as usize).min(tex_h - 1);
+        let ry1 = (ry0 + 1).min(tex_h - 1);
+        let wy = ((fy - ry0 as f64) * 256.0) as u32;
+        let row0 = &texture[ry0 * tex_w..ry0 * tex_w + tex_w];
+        let row1 = &texture[ry1 * tex_w..ry1 * tex_w + tex_w];
 
         for (px, col) in out_row.iter_mut().zip(&cols) {
             *px = match *col {
-                Some((x0, x1, wx)) => {
-                    let top = lerp(row0[x0], row0[x1], wx);
-                    let bot = lerp(row1[x0], row1[x1], wx);
+                Some((cx0, cx1, wx)) => {
+                    let top = lerp(row0[cx0], row0[cx1], wx);
+                    let bot = lerp(row1[cx0], row1[cx1], wx);
                     lerp(top, bot, wy)
                 }
                 None => BORDER,
@@ -206,5 +282,147 @@ mod tests {
         assert_eq!(lerp(0x00_00_00, 0x10_20_40, 0), 0x00_00_00); // t=0 -> a
         assert_eq!(lerp(0x00_00_00, 0x10_20_40, 256), 0x10_20_40); // t=256 -> b
         assert_eq!(lerp(0, 0xFF_FF_FF, 128), 0x7F_7F_7F); // half
+    }
+
+    // Build a varied texture so the bilinear weights actually differ per pixel.
+    fn sample_texture(tex_w: usize, tex_h: usize) -> Vec<u32> {
+        (0..tex_w * tex_h)
+            .map(|i| {
+                let v = (i * 37 % 251) as u32;
+                (v << 16) | ((v ^ 0x5A) << 8) | (v.wrapping_mul(3) & 0xFF)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn scale_region_full_window_equals_scale_into() {
+        // Region scaling over the whole window must reproduce a full rescale.
+        let (tex_w, tex_h) = (16usize, 12usize);
+        let texture = sample_texture(tex_w, tex_h);
+        let (win_w, win_h) = (40u32, 30u32); // non-integer scale + letterbox
+        let rect = scale_display(win_w, win_h, tex_w as u32, tex_h as u32);
+
+        let mut full = vec![0u32; (win_w * win_h) as usize];
+        scale_into(&mut full, win_w, win_h, &texture, tex_w, tex_h, rect);
+
+        let mut piece = vec![0u32; (win_w * win_h) as usize];
+        let dirty = PixelRect {
+            x0: 0,
+            y0: 0,
+            x1: win_w as usize,
+            y1: win_h as usize,
+        };
+        scale_region(
+            &mut piece, win_w, win_h, &texture, tex_w, tex_h, rect, dirty,
+        );
+        assert_eq!(piece, full);
+    }
+
+    #[test]
+    fn scale_region_only_touches_its_rect_and_matches_full() {
+        // Scaling a sub-rect must (a) leave other pixels untouched and (b) match
+        // the full rescale within that rect — the property the damaged-span path
+        // relies on.
+        let (tex_w, tex_h) = (16usize, 12usize);
+        let texture = sample_texture(tex_w, tex_h);
+        let (win_w, win_h) = (48u32, 36u32);
+        let rect = scale_display(win_w, win_h, tex_w as u32, tex_h as u32);
+
+        let mut full = vec![0u32; (win_w * win_h) as usize];
+        scale_into(&mut full, win_w, win_h, &texture, tex_w, tex_h, rect);
+
+        let sentinel = 0xDEAD_BEEFu32;
+        let mut piece = vec![sentinel; (win_w * win_h) as usize];
+        let dirty = PixelRect {
+            x0: 10,
+            y0: 8,
+            x1: 30,
+            y1: 24,
+        };
+        scale_region(
+            &mut piece, win_w, win_h, &texture, tex_w, tex_h, rect, dirty,
+        );
+
+        for sy in 0..win_h as usize {
+            for sx in 0..win_w as usize {
+                let i = sy * win_w as usize + sx;
+                let inside = sx >= dirty.x0 && sx < dirty.x1 && sy >= dirty.y0 && sy < dirty.y1;
+                if inside {
+                    assert_eq!(
+                        piece[i], full[i],
+                        "rescaled pixel ({sx},{sy}) must match full"
+                    );
+                } else {
+                    assert_eq!(
+                        piece[i], sentinel,
+                        "pixel ({sx},{sy}) outside rect was touched"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn window_dirty_bounds_every_changed_output_pixel() {
+        // The optimisation's correctness hinges on this: when a texture region
+        // changes, every output pixel whose value changes must lie within
+        // window_dirty(that region). Otherwise a re-scale of only that span would
+        // leave a stale pixel behind. Verify against a full before/after rescale.
+        let (tex_w, tex_h) = (64usize, 48usize);
+        let mut tex = sample_texture(tex_w, tex_h);
+        let (win_w, win_h) = (200u32, 150u32); // deliberately non-integer scale
+        let rect = scale_display(win_w, win_h, tex_w as u32, tex_h as u32);
+
+        let mut before = vec![0u32; (win_w * win_h) as usize];
+        scale_into(&mut before, win_w, win_h, &tex, tex_w, tex_h, rect);
+
+        let dmg = PixelRect {
+            x0: 20,
+            y0: 15,
+            x1: 31,
+            y1: 23,
+        };
+        for ty in dmg.y0..dmg.y1 {
+            for tx in dmg.x0..dmg.x1 {
+                tex[ty * tex_w + tx] ^= 0x00FF_FFFF;
+            }
+        }
+        let mut after = vec![0u32; (win_w * win_h) as usize];
+        scale_into(&mut after, win_w, win_h, &tex, tex_w, tex_h, rect);
+
+        let wd = window_dirty(dmg, rect, win_w, win_h);
+        for sy in 0..win_h as usize {
+            for sx in 0..win_w as usize {
+                let i = sy * win_w as usize + sx;
+                if before[i] != after[i] {
+                    assert!(
+                        sx >= wd.x0 && sx < wd.x1 && sy >= wd.y0 && sy < wd.y1,
+                        "changed output pixel ({sx},{sy}) lies outside window_dirty {wd:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn window_dirty_covers_the_mapped_region_with_margin() {
+        // A texture-pixel rect maps to a window rect that includes the scaled
+        // image of the damage plus a one-source-pixel margin, clamped to window.
+        let rect = scale_display(2048, 1536, 1024, 768); // 2x, no letterbox
+        let wd = window_dirty(
+            PixelRect {
+                x0: 100,
+                y0: 50,
+                x1: 110,
+                y1: 60,
+            },
+            rect,
+            2048,
+            1536,
+        );
+        // 2x: pixel 100 -> 200; widened by one source pixel (=2 window px) each way.
+        assert!(wd.x0 <= 200 - 2 && wd.x1 >= 110 * 2 + 2);
+        assert!(wd.y0 <= 100 - 2 && wd.y1 >= 60 * 2 + 2);
+        assert!(wd.x1 <= 2048 && wd.y1 <= 1536);
     }
 }

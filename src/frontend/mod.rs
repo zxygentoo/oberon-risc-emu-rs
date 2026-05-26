@@ -2,9 +2,10 @@
 //! input (port of `sdl-main.c`).
 
 mod cli;
+mod clipboard;
 mod input;
 mod ps2;
-mod render;
+pub mod render;
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -17,11 +18,14 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::clipboard::{ArboardClipboard, ClipboardBridge};
-use crate::disk::Disk;
-use crate::io::Led;
-use crate::risc::Risc;
-use crate::serial::pclink::PcLink;
+use risc_core::clipboard::ClipboardBridge;
+use risc_core::disk::Disk;
+use risc_core::io::Led;
+use risc_core::risc::Risc;
+use risc_core::serial::pclink::PcLink;
+
+use crate::error::Result;
+use clipboard::ArboardClipboard;
 use render::{BLACK, WHITE};
 
 const CPU_HZ: u32 = 25_000_000;
@@ -32,11 +36,13 @@ type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 /// Parse args, build the core + devices, and run the GUI. Entry point for the
 /// `risc` binary.
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run() -> Result<()> {
     use clap::Parser;
-    let cfg = cli::Cli::parse()
-        .into_config()
-        .map_err(std::io::Error::other)?;
+    let cli = cli::Cli::parse();
+    if let Some(cli::Command::Headless(args)) = &cli.command {
+        return run_headless(args);
+    }
+    let cfg = cli.into_config()?;
 
     let mut risc = Box::new(Risc::new());
 
@@ -68,19 +74,60 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             use std::path::Path;
             let in_path = cfg.serial_in.as_deref().unwrap_or("/dev/null");
             let out_path = cfg.serial_out.as_deref().unwrap_or("/dev/null");
-            let serial =
-                crate::serial::raw_serial::RawSerial::new(Path::new(in_path), Path::new(out_path))?;
+            let serial = risc_core::serial::raw_serial::RawSerial::new(
+                Path::new(in_path),
+                Path::new(out_path),
+            )?;
             risc.set_serial(Box::new(serial));
         }
         #[cfg(not(unix))]
         {
-            return Err("--serial-in/--serial-out are only supported on unix".into());
+            return Err(crate::error::Error::Config(
+                "--serial-in/--serial-out are only supported on unix".into(),
+            ));
         }
     }
 
     let event_loop = EventLoop::new()?;
     let mut app = App::new(risc, cfg);
     event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+/// Boot headless for `args.frames` and print FNV-1a hashes (or a liveness
+/// summary), for deterministic CI checks and golden-hash regeneration. No window
+/// is created.
+fn run_headless(args: &cli::HeadlessArgs) -> Result<()> {
+    // Boot writes to the disk, so run against a throwaway copy: the source image
+    // is left untouched and repeated runs stay reproducible.
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("oberon_headless_{}.dsk", std::process::id()));
+    std::fs::copy(&args.disk_image, &tmp)?;
+
+    let mut risc = Risc::new();
+    risc.set_spi(1, Box::new(Disk::new(Some(&tmp))?));
+    risc_core::headless::run_frames(&mut risc, args.frames);
+
+    if args.hash {
+        println!(
+            "frames={} framebuffer_fnv1a=0x{:016x} state_fnv1a=0x{:016x}",
+            args.frames,
+            risc_core::headless::framebuffer_hash(&risc),
+            risc_core::headless::state_hash(&risc),
+        );
+    } else {
+        let words = (risc.fb_width() * risc.fb_height()) as usize;
+        let blank = risc.framebuffer()[..words]
+            .iter()
+            .filter(|&&w| w == 0)
+            .count();
+        println!(
+            "ran {} frames; framebuffer {blank}/{words} words blank",
+            args.frames
+        );
+    }
+
+    let _ = std::fs::remove_file(&tmp);
     Ok(())
 }
 
@@ -108,9 +155,18 @@ struct App {
     tex_h: usize,
     texture: Vec<u32>,
 
+    // Persistent window-sized scaled image. Each frame only the damaged span is
+    // re-scaled into it (the rest carries over), then the whole buffer is copied
+    // to the surface — softbuffer's surface buffer isn't guaranteed to persist
+    // between presents. `full_repaint` forces a whole-window rescale (initial +
+    // resize, when the scale factor changes).
+    scaled: Vec<u32>,
+    full_repaint: bool,
+
     window: Option<Rc<Window>>,
-    // Kept alive for the surface's display connection.
-    _context: Option<SbContext>,
+    // Held for the surface's display connection; never read after construction.
+    #[allow(dead_code)]
+    context: Option<SbContext>,
     surface: Option<SbSurface>,
 
     win_w: u32,
@@ -135,10 +191,12 @@ impl App {
             tex_w,
             tex_h,
             texture: vec![BLACK; tex_w * tex_h],
+            scaled: vec![BLACK; tex_w * tex_h],
+            full_repaint: true,
             risc,
             cfg,
             window: None,
-            _context: None,
+            context: None,
             surface: None,
             win_w: tex_w as u32,
             win_h: tex_h as u32,
@@ -160,6 +218,9 @@ impl App {
         self.win_w = w;
         self.win_h = h;
         self.rect = render::scale_display(w, h, self.tex_w as u32, self.tex_h as u32);
+        // The scale factor changed, so the whole window must be re-scaled.
+        self.scaled = vec![BLACK; (w * h) as usize];
+        self.full_repaint = true;
     }
 
     fn render(&mut self) {
@@ -169,29 +230,52 @@ impl App {
         if self.surface.is_none() {
             return;
         }
-        render::blit_damage(&mut self.texture, &mut self.risc, BLACK, WHITE);
 
-        let (w, h) = (self.win_w, self.win_h);
-        let (Some(nw), Some(nh)) = (NonZeroU32::new(w), NonZeroU32::new(h)) else {
+        // Refresh the native texture from framebuffer damage, then re-scale only
+        // the affected window span into the persistent buffer (everything, on the
+        // first frame or after a resize).
+        let dirty = render::blit_damage(&mut self.texture, &mut self.risc, BLACK, WHITE);
+        if self.full_repaint {
+            render::scale_into(
+                &mut self.scaled,
+                self.win_w,
+                self.win_h,
+                &self.texture,
+                self.tex_w,
+                self.tex_h,
+                self.rect,
+            );
+            self.full_repaint = false;
+        } else if let Some(tex_rect) = dirty {
+            let wd = render::window_dirty(tex_rect, self.rect, self.win_w, self.win_h);
+            render::scale_region(
+                &mut self.scaled,
+                self.win_w,
+                self.win_h,
+                &self.texture,
+                self.tex_w,
+                self.tex_h,
+                self.rect,
+                wd,
+            );
+        }
+
+        // Copy the persistent image into the surface buffer (its prior contents
+        // are not guaranteed) and present.
+        let (Some(nw), Some(nh)) = (NonZeroU32::new(self.win_w), NonZeroU32::new(self.win_h))
+        else {
             return;
         };
         let surface = self.surface.as_mut().unwrap();
         if surface.resize(nw, nh).is_err() {
             return;
         }
-        let mut buf = match surface.buffer_mut() {
-            Ok(b) => b,
-            Err(_) => return,
+        let Ok(mut buf) = surface.buffer_mut() else {
+            return;
         };
-        render::scale_into(
-            &mut buf,
-            w,
-            h,
-            &self.texture,
-            self.tex_w,
-            self.tex_h,
-            self.rect,
-        );
+        if buf.len() == self.scaled.len() {
+            buf.copy_from_slice(&self.scaled);
+        }
         window.pre_present_notify();
         let _ = buf.present();
     }
@@ -218,11 +302,10 @@ impl ApplicationHandler for App {
             let big = event_loop
                 .primary_monitor()
                 .or_else(|| event_loop.available_monitors().next())
-                .map(|m| {
+                .is_some_and(|m| {
                     let s = m.size();
                     s.width >= self.tex_w as u32 * 2 && s.height >= self.tex_h as u32 * 2
-                })
-                .unwrap_or(false);
+                });
             if big {
                 2.0
             } else {
@@ -267,7 +350,7 @@ impl ApplicationHandler for App {
 
         let size = window.inner_size();
         self.window = Some(window);
-        self._context = Some(context);
+        self.context = Some(context);
         self.surface = Some(surface);
         self.reconfigure(size.width.max(1), size.height.max(1));
 

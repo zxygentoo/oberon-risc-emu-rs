@@ -3,6 +3,17 @@
 //!
 //! [`CRisc`] wraps an opaque `struct RISC *`. The C `risc_new` never frees, so
 //! these intentionally leak — fine for a test process.
+//!
+//! # Safety
+//!
+//! Every `unsafe` block here is a call into the C reference shim (`cosim/shim.c`,
+//! linked by `build.rs`). The pointer is the opaque `struct RISC *` returned by
+//! `cosim_new`; the shim never frees it and we never alias it mutably across
+//! threads (tests are single-threaded per `CRisc`). The state/RAM/framebuffer
+//! accessors marshal fixed-size buffers whose lengths match the C side exactly.
+
+// Audited exception to the crate-wide `deny(unsafe_code)`: this module is FFI.
+#![allow(unsafe_code)]
 
 use std::ffi::{c_void, CString};
 use std::path::Path;
@@ -43,7 +54,15 @@ pub fn fp_div(x: u32, y: u32) -> u32 {
 /// `idiv` in the C reference, as `(quot, rem)`.
 pub fn idiv(x: u32, y: u32, signed_div: bool) -> (u32, u32) {
     let (mut q, mut r) = (0u32, 0u32);
-    unsafe { cosim_idiv(x, y, signed_div as i32, &mut q, &mut r) };
+    unsafe {
+        cosim_idiv(
+            x,
+            y,
+            signed_div as i32,
+            std::ptr::from_mut(&mut q),
+            std::ptr::from_mut(&mut r),
+        );
+    };
     (q, r)
 }
 

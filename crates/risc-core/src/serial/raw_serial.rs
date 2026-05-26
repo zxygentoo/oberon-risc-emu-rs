@@ -2,6 +2,16 @@
 //! `raw-serial.c`), used by `--serial-in`/`--serial-out`. Non-blocking fds with
 //! `poll(2)` for the ready/writable status bits. Windows named pipes are a
 //! Phase-2 item.
+//!
+//! # Safety
+//!
+//! The single `unsafe` block calls `libc::poll`. The `pollfd` array is a live,
+//! initialised stack slice; the fds come from `File`s this struct owns and
+//! outlive the call, so they stay valid for `poll`'s duration. Reads/writes go
+//! through safe `std::io` on those same `File`s.
+
+// Audited exception to the crate-wide `deny(unsafe_code)`: one `libc::poll` FFI.
+#![allow(unsafe_code)]
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};

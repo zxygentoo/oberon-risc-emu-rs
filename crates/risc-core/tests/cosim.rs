@@ -9,10 +9,10 @@
 //! golden hashes.
 #![cfg(feature = "cosim")]
 
-use oberon_risc_emu::cosim::{self, CRisc};
-use oberon_risc_emu::disk::Disk;
-use oberon_risc_emu::fp;
-use oberon_risc_emu::risc::Risc;
+use risc_core::cosim::{self, CRisc};
+use risc_core::disk::Disk;
+use risc_core::fp;
+use risc_core::risc::Risc;
 
 const CPU_HZ: u32 = 25_000_000;
 const FPS: u32 = 60;

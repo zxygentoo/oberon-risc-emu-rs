@@ -1,60 +1,13 @@
-[package]
-name = "oberon-risc-emu"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
-description = "A Rust port of Peter De Wachter's Project Oberon RISC5 emulator"
-readme = "README.md"
-default-run = "risc"
+[workspace]
+members = ["crates/risc-core"]
 
-[lib]
-name = "oberon_risc_emu"
-path = "src/lib.rs"
-
-[[bin]]
-name = "risc"
-path = "src/bin/risc.rs"
-
-[features]
-default = ["frontend"]
-# The GUI stack. `cargo test --no-default-features` builds the pure core alone
-# (fast, no windowing/clipboard system libs) for headless CI.
-frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap", "dep:thiserror"]
-# Differential co-simulation: compiles the C reference (risc.c + risc-fp.c +
-# disk.c via cosim/shim.c) and links it for live FFI comparison. Opt-in; needs a
-# C toolchain and the sibling C repo (path via OBERON_C_SRC). See build.rs,
-# src/cosim.rs, tests/cosim.rs.
-cosim = ["dep:cc"]
-
-[dependencies]
-# Core: the four ALU status flags as a typed set (macro_rules-based, no proc-macro
-# deps, so the --no-default-features core build stays lean).
-bitflags = "2"
-
-# Pinned as a known-good trio: winit 0.30 + softbuffer 0.4 share raw-window-handle 0.6.
-winit = { version = "0.30", optional = true }
-softbuffer = { version = "0.4", optional = true }
-arboard = { version = "3", optional = true }
-clap = { version = "4", features = ["derive"], optional = true }
-# Typed frontend errors (src/error.rs). Frontend-only so the pure-core build
-# (`--no-default-features`) stays dependency-free.
-thiserror = { version = "2", optional = true }
-
-# Used only by the unix raw-serial device (poll(2) + non-blocking fds); already
-# present transitively via winit.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
-[build-dependencies]
-# Compiles the C reference shim for the `cosim` feature only.
-cc = { version = "1", optional = true }
-
-# Lint policy. Warnings are treated as errors in CI via
-# `cargo clippy --all-targets -- -D warnings` (kept out of the manifest so a new
-# toolchain's lints surface as CI failures, not broken local builds). We opt
-# into clippy::pedantic and curate away the lints that fight a deliberately
-# bit-exact, C-derived emulator.
-[lints.clippy]
+# Shared lint policy, inherited by both crates via `[lints] workspace = true`.
+# Warnings are treated as errors in CI via `cargo clippy --workspace
+# --all-targets -- -D warnings` (kept out of the manifest so a new toolchain's
+# lints surface as CI failures, not broken local builds). We opt into
+# clippy::pedantic and curate away the lints that fight a deliberately bit-exact,
+# C-derived emulator.
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
 # Modelling exact 32-bit machine arithmetic means pervasive, deliberate `as`
@@ -86,3 +39,36 @@ verbose_bit_mask = "allow"
 if_not_else = "allow"
 float_cmp = "allow"                # render tests compare exact scale constants
 decimal_bitwise_operands = "allow" # masking decimal screen dims reads clearer
+
+[package]
+name = "oberon-risc-emu"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A Rust port of Peter De Wachter's Project Oberon RISC5 emulator"
+readme = "README.md"
+default-run = "risc"
+
+[lib]
+name = "oberon_risc_emu"
+path = "src/lib.rs"
+
+[[bin]]
+name = "risc"
+path = "src/bin/risc.rs"
+
+[dependencies]
+# The pure RISC5 core; this crate is its windowing frontend.
+risc-core = { path = "crates/risc-core" }
+
+# The GUI stack. winit 0.30 + softbuffer 0.4 are pinned as a known-good trio
+# (they share raw-window-handle 0.6).
+winit = "0.30"
+softbuffer = "0.4"
+arboard = "3"
+clap = { version = "4", features = ["derive"] }
+# Typed frontend errors (src/error.rs).
+thiserror = "2"
+
+[lints]
+workspace = true

@@ -68,8 +68,8 @@ impl Cli {
     /// Validate options and resolve defaults, mirroring `main`'s argument
     /// handling.
     pub fn into_config(self) -> Result<Config> {
-        let mut width = crate::risc::FRAMEBUFFER_WIDTH as i32;
-        let mut height = crate::risc::FRAMEBUFFER_HEIGHT as i32;
+        let mut width = risc_core::risc::FRAMEBUFFER_WIDTH as i32;
+        let mut height = risc_core::risc::FRAMEBUFFER_HEIGHT as i32;
         let size_option = self.size.is_some();
         if let Some(s) = &self.size {
             let (w, h) = parse_size(s)?;

@@ -3,8 +3,8 @@
 //! the desktop actually renders). Gated on the `OBERON_DISK` environment
 //! variable (path to a `.dsk`); skipped when unset so default CI stays hermetic.
 
-use oberon_risc_emu::disk::Disk;
-use oberon_risc_emu::risc::Risc;
+use risc_core::disk::Disk;
+use risc_core::risc::Risc;
 
 const CPU_HZ: u32 = 25_000_000;
 const FPS: u32 = 60;

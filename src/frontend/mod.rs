@@ -2,6 +2,7 @@
 //! input (port of `sdl-main.c`).
 
 mod cli;
+mod clipboard;
 mod input;
 mod ps2;
 mod render;
@@ -17,12 +18,14 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::ModifiersState;
 use winit::window::{Fullscreen, Window, WindowId};
 
-use crate::clipboard::{ArboardClipboard, ClipboardBridge};
-use crate::disk::Disk;
+use risc_core::clipboard::ClipboardBridge;
+use risc_core::disk::Disk;
+use risc_core::io::Led;
+use risc_core::risc::Risc;
+use risc_core::serial::pclink::PcLink;
+
 use crate::error::Result;
-use crate::io::Led;
-use crate::risc::Risc;
-use crate::serial::pclink::PcLink;
+use clipboard::ArboardClipboard;
 use render::{BLACK, WHITE};
 
 const CPU_HZ: u32 = 25_000_000;
@@ -67,8 +70,10 @@ pub fn run() -> Result<()> {
             use std::path::Path;
             let in_path = cfg.serial_in.as_deref().unwrap_or("/dev/null");
             let out_path = cfg.serial_out.as_deref().unwrap_or("/dev/null");
-            let serial =
-                crate::serial::raw_serial::RawSerial::new(Path::new(in_path), Path::new(out_path))?;
+            let serial = risc_core::serial::raw_serial::RawSerial::new(
+                Path::new(in_path),
+                Path::new(out_path),
+            )?;
             risc.set_serial(Box::new(serial));
         }
         #[cfg(not(unix))]

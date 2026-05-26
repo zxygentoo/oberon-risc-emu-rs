@@ -8,7 +8,7 @@
 //! scale is bilinear to match the linear filtering SDL uses (`"best"` scale
 //! quality), which looks far smoother than nearest-neighbour on the 1-bit text.
 
-use crate::risc::Risc;
+use risc_core::risc::Risc;
 
 /// Solarized "off"/"on" colours used by the C frontend. softbuffer wants
 /// `0x00RRGGBB`, which these already are.

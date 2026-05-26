@@ -3,7 +3,7 @@
 //! `tools/gen_fp_vectors.c` calling the C `fp_*`/`idiv` directly; here we replay
 //! those inputs through the Rust port and assert bit-identical output.
 
-use oberon_risc_emu::fp::{fp_add, fp_div, fp_mul, idiv};
+use risc_core::fp::{fp_add, fp_div, fp_mul, idiv};
 
 fn hex(s: &str) -> u32 {
     u32::from_str_radix(s, 16).unwrap_or_else(|_| panic!("invalid hex {s:?}"))
@@ -133,15 +133,12 @@ fn fp_mul_div_basic() {
 #[test]
 fn idiv_signed_floors_toward_negative_infinity() {
     // Unsigned: plain truncating division.
-    assert_eq!(
-        idiv(7, 2, false),
-        oberon_risc_emu::fp::IDiv { quot: 3, rem: 1 }
-    );
+    assert_eq!(idiv(7, 2, false), risc_core::fp::IDiv { quot: 3, rem: 1 });
     // Signed: Oberon DIV/MOD floor toward -inf, so -7 / 2 == -4 rem 1.
     let m7 = (-7i32) as u32;
     assert_eq!(
         idiv(m7, 2, true),
-        oberon_risc_emu::fp::IDiv {
+        risc_core::fp::IDiv {
             quot: (-4i32) as u32,
             rem: 1
         }

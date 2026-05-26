@@ -10,8 +10,8 @@ image to the interactive desktop.
   [`softbuffer`](https://crates.io/crates/softbuffer) +
   [`arboard`](https://crates.io/crates/arboard).
 - **Workspace** — a dependency-light [`risc-core`](crates/risc-core) library
-  (CPU, software FP, MMIO, disk, serial) plus the `oberon-risc-emu` frontend
-  crate carrying the `risc` binary.
+  (CPU, software FP, MMIO, disk, serial) plus the top-level `oberon-risc-emu`
+  crate: the windowing frontend, which builds the `risc` executable you run.
 - **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
   live co-simulation — save one [documented divergence](DIVERGENCES.md).
 

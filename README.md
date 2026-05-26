@@ -33,8 +33,6 @@ cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 - **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
   the left `Alt` key acts as the middle button. Hotkeys: `F12` /
   `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
-- **Headless** — deterministic, windowless run for CI / golden regeneration:
-  `cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk`.
 - More dated images live upstream under
   [`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
 
@@ -107,6 +105,25 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" \
 
 Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS`; the
 render hot path has a `cargo bench` microbenchmark.
+
+### Headless boots
+
+`risc headless` runs the core on the same deterministic 60 Hz clock as the boot
+golden — windowless and byte-for-byte reproducible — so it's handy for CI smoke
+checks and for regenerating golden hashes:
+
+```sh
+# run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes
+cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
+```
+
+- `--frames N` — how many 60 Hz frames to boot (default 250).
+- `--hash` — print FNV-1a hashes of the framebuffer and the `{PC, R, H, flags}`
+  state; these line up with `boot_matches_c_reference`'s checkpoints (at frame
+  250 they reproduce the C-derived golden). Omit it for a one-line liveness
+  summary (frames run, blank framebuffer words) instead.
+
+It boots a throwaway copy of the image, so the original is left untouched.
 
 ## License
 

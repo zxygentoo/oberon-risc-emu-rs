@@ -19,6 +19,7 @@ pub mod boot_rom;
 pub mod clipboard;
 pub mod disk;
 pub mod fp;
+pub mod headless;
 pub mod io;
 pub mod risc;
 pub mod serial;

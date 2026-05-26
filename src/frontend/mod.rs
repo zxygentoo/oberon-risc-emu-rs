@@ -38,7 +38,11 @@ type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 /// `risc` binary.
 pub fn run() -> Result<()> {
     use clap::Parser;
-    let cfg = cli::Cli::parse().into_config()?;
+    let cli = cli::Cli::parse();
+    if let Some(cli::Command::Headless(args)) = &cli.command {
+        return run_headless(args);
+    }
+    let cfg = cli.into_config()?;
 
     let mut risc = Box::new(Risc::new());
 
@@ -87,6 +91,43 @@ pub fn run() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let mut app = App::new(risc, cfg);
     event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+/// Boot headless for `args.frames` and print FNV-1a hashes (or a liveness
+/// summary), for deterministic CI checks and golden-hash regeneration. No window
+/// is created.
+fn run_headless(args: &cli::HeadlessArgs) -> Result<()> {
+    // Boot writes to the disk, so run against a throwaway copy: the source image
+    // is left untouched and repeated runs stay reproducible.
+    let mut tmp = std::env::temp_dir();
+    tmp.push(format!("oberon_headless_{}.dsk", std::process::id()));
+    std::fs::copy(&args.disk_image, &tmp)?;
+
+    let mut risc = Risc::new();
+    risc.set_spi(1, Box::new(Disk::new(Some(&tmp))?));
+    risc_core::headless::run_frames(&mut risc, args.frames);
+
+    if args.hash {
+        println!(
+            "frames={} framebuffer_fnv1a=0x{:016x} state_fnv1a=0x{:016x}",
+            args.frames,
+            risc_core::headless::framebuffer_hash(&risc),
+            risc_core::headless::state_hash(&risc),
+        );
+    } else {
+        let words = (risc.fb_width() * risc.fb_height()) as usize;
+        let blank = risc.framebuffer()[..words]
+            .iter()
+            .filter(|&&w| w == 0)
+            .count();
+        println!(
+            "ran {} frames; framebuffer {blank}/{words} words blank",
+            args.frames
+        );
+    }
+
+    let _ = std::fs::remove_file(&tmp);
     Ok(())
 }
 

@@ -4,10 +4,8 @@
 //! variable (path to a `.dsk`); skipped when unset so default CI stays hermetic.
 
 use risc_core::disk::Disk;
+use risc_core::headless::{self, CPU_HZ, FPS};
 use risc_core::risc::Risc;
-
-const CPU_HZ: u32 = 25_000_000;
-const FPS: u32 = 60;
 
 #[test]
 fn boots_to_a_live_framebuffer() {
@@ -26,11 +24,7 @@ fn boots_to_a_live_framebuffer() {
     risc.set_spi(1, Box::new(disk));
 
     // Deterministic synthetic 60 Hz clock (independent of wall time).
-    let frame_ms = 1000 / FPS;
-    for frame in 0..600u32 {
-        risc.set_time(frame.wrapping_mul(frame_ms));
-        risc.run(CPU_HZ / FPS);
-    }
+    headless::run_frames(&mut risc, 600);
 
     let words = (risc.fb_width() * risc.fb_height()) as usize;
     let fb = &risc.framebuffer()[..words];
@@ -71,17 +65,6 @@ const BOOT_GOLDEN: &[(u32, u64, u64)] = &[
     (250, 0xb9bdbf56ba51298d, 0x7531e8819ea3aac1),
 ];
 
-fn fnv1a(words: impl IntoIterator<Item = u32>) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for w in words {
-        for b in w.to_le_bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    h
-}
-
 /// Differential boot: drive the core with the same deterministic schedule as
 /// `tools/gen_boot_golden.c` and assert the framebuffer + CPU state hash
 /// bit-identically to the C reference at every checkpoint. This proves the port
@@ -116,13 +99,8 @@ fn boot_matches_c_reference() {
         risc.run(CPU_HZ / FPS);
 
         if ci < BOOT_GOLDEN.len() && BOOT_GOLDEN[ci].0 == frame + 1 {
-            let words = (risc.fb_width() * risc.fb_height()) as usize;
-            let fb_hash = fnv1a(risc.framebuffer()[..words].iter().copied());
-
-            let s = risc.cpu_state();
-            let flags = u32::from(s.flags.bits());
-            let state = std::iter::once(s.pc).chain(s.r).chain([s.h, flags]);
-            let state_hash = fnv1a(state);
+            let fb_hash = headless::framebuffer_hash(&risc);
+            let state_hash = headless::state_hash(&risc);
 
             let (n, gfb, gstate) = BOOT_GOLDEN[ci];
             assert_eq!(

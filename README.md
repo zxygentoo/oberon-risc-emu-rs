@@ -22,6 +22,11 @@ cargo build --release      # whole workspace
 cargo build -p risc-core   # core alone, no GUI/system libs
 ```
 
+The release build produces the emulator binary at `target/release/risc`. The
+examples below invoke it with `cargo run --release -- …`; once built you can run
+`target/release/risc …` directly (or `cargo install --path .` to put `risc` on
+your `PATH`).
+
 ## Run
 
 A disk image is bundled under [`DiskImage/`](DiskImage):
@@ -33,22 +38,19 @@ cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
 - **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
   the left `Alt` key acts as the middle button. Hotkeys: `F12` /
   `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
-- **Headless** — deterministic, windowless run for CI / golden regeneration:
-  `cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk`.
-- More dated images live upstream under
-  [`DiskImage/`](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+- We bundle one image; the original `oberon-risc-emu` repo has other dated
+  versions in [its `DiskImage/` directory](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
 
 ## Command line options
 
-`risc [OPTIONS] DISK-IMAGE` (i.e. `cargo run --release -- [OPTIONS] DISK-IMAGE`):
+`cargo run --release -- [OPTIONS] DISK-IMAGE` (or `target/release/risc [OPTIONS] DISK-IMAGE`):
 
 - `--fullscreen` — start in fullscreen.
-- `--zoom REAL` — scale the windowed display (default: auto 2× on large monitors).
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
-- `--boot-from-serial` — boot over the serial line; no disk image needed.
-- `--serial-in FILE` / `--serial-out FILE` — wire the serial line to files (Unix only).
+
+`cargo run --release -- --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
 
 ## Transferring files
 
@@ -107,6 +109,25 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" \
 
 Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS`; the
 render hot path has a `cargo bench` microbenchmark.
+
+### Headless boots
+
+The `headless` subcommand runs the core on the same deterministic 60 Hz clock as
+the boot golden — windowless and byte-for-byte reproducible — so it's handy for
+CI smoke checks and for regenerating golden hashes:
+
+```sh
+# run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes
+cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
+```
+
+- `--frames N` — how many 60 Hz frames to boot (default 250).
+- `--hash` — print FNV-1a hashes of the framebuffer and the `{PC, R, H, flags}`
+  state; these line up with `boot_matches_c_reference`'s checkpoints (at frame
+  250 they reproduce the C-derived golden). Omit it for a one-line liveness
+  summary (frames run, blank framebuffer words) instead.
+
+It boots a throwaway copy of the image, so the original is left untouched.
 
 ## License
 

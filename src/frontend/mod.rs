@@ -19,6 +19,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use crate::clipboard::{ArboardClipboard, ClipboardBridge};
 use crate::disk::Disk;
+use crate::error::Result;
 use crate::io::Led;
 use crate::risc::Risc;
 use crate::serial::pclink::PcLink;
@@ -32,11 +33,9 @@ type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 /// Parse args, build the core + devices, and run the GUI. Entry point for the
 /// `risc` binary.
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run() -> Result<()> {
     use clap::Parser;
-    let cfg = cli::Cli::parse()
-        .into_config()
-        .map_err(std::io::Error::other)?;
+    let cfg = cli::Cli::parse().into_config()?;
 
     let mut risc = Box::new(Risc::new());
 
@@ -74,7 +73,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         #[cfg(not(unix))]
         {
-            return Err("--serial-in/--serial-out are only supported on unix".into());
+            return Err(crate::error::Error::Config(
+                "--serial-in/--serial-out are only supported on unix".into(),
+            ));
         }
     }
 

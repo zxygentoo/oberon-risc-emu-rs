@@ -19,7 +19,7 @@ path = "src/bin/risc.rs"
 default = ["frontend"]
 # The GUI stack. `cargo test --no-default-features` builds the pure core alone
 # (fast, no windowing/clipboard system libs) for headless CI.
-frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap"]
+frontend = ["dep:winit", "dep:softbuffer", "dep:arboard", "dep:clap", "dep:thiserror"]
 # Differential co-simulation: compiles the C reference (risc.c + risc-fp.c +
 # disk.c via cosim/shim.c) and links it for live FFI comparison. Opt-in; needs a
 # C toolchain and the sibling C repo (path via OBERON_C_SRC). See build.rs,
@@ -32,6 +32,9 @@ winit = { version = "0.30", optional = true }
 softbuffer = { version = "0.4", optional = true }
 arboard = { version = "3", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
+# Typed frontend errors (src/error.rs). Frontend-only so the pure-core build
+# (`--no-default-features`) stays dependency-free.
+thiserror = { version = "2", optional = true }
 
 # Used only by the unix raw-serial device (poll(2) + non-blocking fds); already
 # present transitively via winit.

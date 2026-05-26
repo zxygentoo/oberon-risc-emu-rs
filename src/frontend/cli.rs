@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use crate::error::{Error, Result};
+
 const MAX_DIM: i32 = 2048;
 
 /// `risc [OPTIONS...] DISK-IMAGE`
@@ -65,7 +67,7 @@ pub struct Config {
 impl Cli {
     /// Validate options and resolve defaults, mirroring `main`'s argument
     /// handling.
-    pub fn into_config(self) -> Result<Config, String> {
+    pub fn into_config(self) -> Result<Config> {
         let mut width = crate::risc::FRAMEBUFFER_WIDTH as i32;
         let mut height = crate::risc::FRAMEBUFFER_HEIGHT as i32;
         let size_option = self.size.is_some();
@@ -76,7 +78,9 @@ impl Cli {
         }
 
         if self.disk_image.is_none() && !self.boot_from_serial {
-            return Err("a DISK-IMAGE is required (or pass --boot-from-serial)".into());
+            return Err(Error::Config(
+                "a DISK-IMAGE is required (or pass --boot-from-serial)".into(),
+            ));
         }
 
         let mem = self.mem.unwrap_or(0);
@@ -96,18 +100,18 @@ impl Cli {
     }
 }
 
-fn parse_size(s: &str) -> Result<(i32, i32), String> {
+fn parse_size(s: &str) -> Result<(i32, i32)> {
     let (w, h) = s
         .split_once(['x', 'X'])
-        .ok_or_else(|| format!("invalid --size {s:?}, expected WIDTHxHEIGHT"))?;
+        .ok_or_else(|| Error::Config(format!("invalid --size {s:?}, expected WIDTHxHEIGHT")))?;
     let w = w
         .trim()
         .parse::<i32>()
-        .map_err(|_| format!("invalid width in --size {s:?}"))?;
+        .map_err(|_| Error::Config(format!("invalid width in --size {s:?}")))?;
     let h = h
         .trim()
         .parse::<i32>()
-        .map_err(|_| format!("invalid height in --size {s:?}"))?;
+        .map_err(|_| Error::Config(format!("invalid height in --size {s:?}")))?;
     Ok((w, h))
 }
 

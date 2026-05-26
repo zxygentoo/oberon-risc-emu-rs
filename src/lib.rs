@@ -19,6 +19,9 @@ pub mod risc;
 pub mod serial;
 
 #[cfg(feature = "frontend")]
+pub mod error;
+
+#[cfg(feature = "frontend")]
 pub mod frontend;
 
 #[cfg(feature = "cosim")]

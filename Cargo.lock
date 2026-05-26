@@ -941,6 +941,7 @@ dependencies = [
  "clap",
  "libc",
  "softbuffer",
+ "thiserror 2.0.18",
  "winit",
 ]
 

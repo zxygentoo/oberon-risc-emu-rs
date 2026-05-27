@@ -55,7 +55,7 @@ path = "src/lib.rs"
 
 [[bin]]
 name = "risc"
-path = "src/bin/risc.rs"
+path = "src/main.rs"
 
 # Render microbenchmark (`cargo bench`). Plain std timing, no harness crate, so
 # it adds no dependencies; excluded from `cargo test`.

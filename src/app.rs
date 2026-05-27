@@ -1,14 +1,5 @@
-//! The `winit` + `softbuffer` frontend: window, 60 fps clock loop, render, and
-//! input (port of `sdl-main.c`).
-
-mod cli;
-mod clipboard;
-mod input;
-mod ps2;
-// `pub` only so the benches/render.rs microbench (a separate target) can reach
-// the scaling functions; not part of this crate's real API, so doc-hidden.
-#[doc(hidden)]
-pub mod render;
+//! The windowed application: window, 60 fps clock loop, render, and input
+//! dispatch (port of `sdl-main.c`).
 
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -27,9 +18,11 @@ use risc_core::io::Led;
 use risc_core::risc::Risc;
 use risc_core::serial::pclink::PcLink;
 
+use crate::cli;
+use crate::clipboard::ArboardClipboard;
 use crate::error::Result;
-use clipboard::ArboardClipboard;
-use render::{BLACK, WHITE};
+use crate::input;
+use crate::render::{self, BLACK, WHITE};
 
 const CPU_HZ: u32 = 25_000_000;
 const FPS: u32 = 60;
@@ -150,12 +143,14 @@ impl Led for LedLogger {
     }
 }
 
-struct App {
-    risc: Box<Risc>,
+pub(crate) struct App {
+    // Fields marked `pub(crate)` are the ones the sibling `input` module reaches
+    // into; the rest stay private to this module.
+    pub(crate) risc: Box<Risc>,
     cfg: cli::Config,
 
-    tex_w: usize,
-    tex_h: usize,
+    pub(crate) tex_w: usize,
+    pub(crate) tex_h: usize,
     texture: Vec<u32>,
 
     // Persistent window-sized scaled image. Each frame only the damaged span is
@@ -166,7 +161,7 @@ struct App {
     scaled: Vec<u32>,
     full_repaint: bool,
 
-    window: Option<Rc<Window>>,
+    pub(crate) window: Option<Rc<Window>>,
     // Held for the surface's display connection; never read after construction.
     #[allow(dead_code)]
     context: Option<SbContext>,
@@ -174,11 +169,11 @@ struct App {
 
     win_w: u32,
     win_h: u32,
-    rect: render::DisplayRect,
+    pub(crate) rect: render::DisplayRect,
     fullscreen: bool,
 
-    modifiers: ModifiersState,
-    mouse_offscreen: bool,
+    pub(crate) modifiers: ModifiersState,
+    pub(crate) mouse_offscreen: bool,
 
     start: Instant,
     next_frame: Instant,
@@ -283,7 +278,7 @@ impl App {
         let _ = buf.present();
     }
 
-    fn toggle_fullscreen(&mut self) {
+    pub(crate) fn toggle_fullscreen(&mut self) {
         self.fullscreen = !self.fullscreen;
         if let Some(window) = &self.window {
             window.set_fullscreen(self.fullscreen.then(|| Fullscreen::Borderless(None)));

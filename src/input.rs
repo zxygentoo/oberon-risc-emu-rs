@@ -5,10 +5,10 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use super::{ps2, App};
+use crate::{app::App, ps2};
 
-/// Dispatch a window event that `mod.rs` didn't consume itself.
-pub(super) fn handle(app: &mut App, event_loop: &ActiveEventLoop, event: WindowEvent) {
+/// Dispatch a window event that `app.rs` didn't consume itself.
+pub(crate) fn handle(app: &mut App, event_loop: &ActiveEventLoop, event: WindowEvent) {
     match event {
         WindowEvent::ModifiersChanged(mods) => app.modifiers = mods.state(),
 

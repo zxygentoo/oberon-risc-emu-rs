@@ -8,7 +8,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use oberon_risc_emu::frontend::render::{
+use oberon_risc_emu::render::{
     scale_display, scale_into, scale_region, window_dirty, PixelRect, BLACK, WHITE,
 };
 

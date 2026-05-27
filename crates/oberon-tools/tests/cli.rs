@@ -1,8 +1,12 @@
-//! End-to-end tests for the `ob2unix` and `asciidecoder` binaries.
+//! End-to-end tests for the `ob2unix`, `asciidecoder`, and `build-image` binaries.
 
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+
+use risc_core::disk::Disk;
+use risc_core::headless;
+use risc_core::risc::Risc;
 
 const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
 const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
@@ -89,7 +93,7 @@ fn ob2unix_help_goes_to_stdout() {
 #[test]
 fn ob2unix_rejects_unexpected_argument() {
     let out = run(OB2UNIX, &["nope"], b"");
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2)); // clap usage error
     assert!(out.stdout.is_empty());
     assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
 }
@@ -143,6 +147,41 @@ fn asciidecoder_help_goes_to_stdout() {
 #[test]
 fn asciidecoder_rejects_unknown_flag() {
     let out = run(ASCIIDECODER, &["-x"], b"");
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("unrecognized argument"));
+    assert_eq!(out.status.code(), Some(2)); // clap usage error
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
+}
+
+// Gated on OBERON_SOURCES (a fetched Project Oberon source tree); the PO2013
+// sources aren't vendored, so default CI skips this. Point it at e.g.
+// project-norebo's `upstream` directory.
+#[test]
+fn build_image_reproduces_the_boot_golden() {
+    let Ok(sources) = std::env::var("OBERON_SOURCES") else {
+        eprintln!("OBERON_SOURCES not set; skipping build-image golden test");
+        return;
+    };
+
+    let dir = scratch_dir("build-image");
+    let dsk = dir.join("Oberon.dsk");
+    let status = Command::new(env!("CARGO_BIN_EXE_build-image"))
+        .arg(&sources)
+        .arg(&dsk)
+        .status()
+        .expect("spawn build-image");
+    assert!(status.success(), "build-image failed");
+    assert_eq!(
+        std::fs::metadata(&dsk).expect("image produced").len(),
+        990_208,
+        "unexpected image size",
+    );
+
+    // The freshly built image must boot bit-identically to the C-derived golden
+    // (frame 250), the same hashes risc-core's boot_matches_c_reference checks.
+    let mut risc = Risc::new();
+    risc.set_spi(1, Box::new(Disk::new(Some(&dsk)).expect("open disk")));
+    headless::run_frames(&mut risc, 250);
+    assert_eq!(headless::framebuffer_hash(&risc), 0xb9bd_bf56_ba51_298d);
+    assert_eq!(headless::state_hash(&risc), 0x7531_e881_9ea3_aac1);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

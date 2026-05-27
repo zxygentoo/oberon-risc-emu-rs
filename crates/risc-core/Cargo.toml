@@ -2,7 +2,7 @@
 name = "risc-core"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "ISC"
 description = "Pure RISC5 core (CPU, FP, MMIO, disk, serial) for the Project Oberon emulator"
 
 [features]

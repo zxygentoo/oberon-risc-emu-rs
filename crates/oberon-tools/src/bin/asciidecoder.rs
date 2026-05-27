@@ -1,13 +1,18 @@
-// Decodes 'AsciiCoder.DecodeFiles' archives
+//! Extract the files from an Oberon `AsciiCoder` archive (`AsciiCoder.DecodeFiles`).
 
-use std::env;
 use std::fs;
-use std::io::{stdin, BufRead, BufReader, ErrorKind, Read, Write};
+use std::io::{stdin, BufRead, BufReader, Read};
+use std::path::PathBuf;
 use std::process::exit;
 
+use clap::Parser;
+
+/// Shorthand for a byte-yielding iterator — the source the decoders pull from.
 trait ByteIterator: Iterator<Item = u8> {}
 impl<T: Iterator<Item = u8>> ByteIterator for T {}
 
+/// Advance `bytes` past the literal `AsciiCoder.DecodeFiles` marker that opens an
+/// archive; return whether it was found (consuming up to and including it).
 fn skip_header<T: ByteIterator>(bytes: &mut T) -> bool {
     let command = b"AsciiCoder.DecodeFiles";
     let mut idx = 0;
@@ -25,6 +30,9 @@ fn skip_header<T: ByteIterator>(bytes: &mut T) -> bool {
     false
 }
 
+/// Decode one 6-bit-packed block: printable chars `'0'`..`'o'` each carry 6 bits
+/// (accumulated LSB-first into bytes), ended by a `#`/`%`/`$` terminator whose
+/// identity encodes the leftover-bit count (0/2/4). `None` on a wrong terminator.
 fn decode<T: ByteIterator>(bytes: &mut T) -> Option<Vec<u8>> {
     const BASE: u8 = 48;
     let mut vec = Vec::new();
@@ -51,6 +59,8 @@ fn decode<T: ByteIterator>(bytes: &mut T) -> Option<Vec<u8>> {
     None
 }
 
+/// Read a sign-extended little-endian base-128 varint (7 bits per byte, high bit
+/// set means "more bytes follow"). `None` if it would exceed 32 bits or input ends.
 fn read_number<T: ByteIterator>(bytes: &mut T) -> Option<i32> {
     let mut n: i32 = 0;
     let mut bits = 0;
@@ -69,6 +79,9 @@ fn read_number<T: ByteIterator>(bytes: &mut T) -> Option<i32> {
     None
 }
 
+/// Inflate a compressed payload (as carried by `%`-flagged archives): a varint
+/// output size, then a predictive byte stream — one "misprediction" bit per byte
+/// selects between a hash-indexed prediction table and a following literal byte.
 fn decompress<T: ByteIterator>(bytes: &mut T) -> Option<Vec<u8>> {
     const N: usize = 16384;
 
@@ -109,6 +122,8 @@ fn decompress<T: ByteIterator>(bytes: &mut T) -> Option<Vec<u8>> {
     Some(vec)
 }
 
+/// Read the next whitespace-delimited token (skipping leading whitespace), or
+/// `None` at end of input. Used to read the archive's file-name list.
 fn read_name<T: ByteIterator>(bytes: &mut T) -> Option<String> {
     let vec: Vec<u8> = bytes
         .skip_while(|&b| b <= 32)
@@ -122,105 +137,56 @@ fn read_name<T: ByteIterator>(bytes: &mut T) -> Option<String> {
     }
 }
 
-macro_rules! printerr {
-    ($prog_name:expr, $err:expr, $fmt:expr) => {
-        eprintln!(concat!("{}: ", $fmt, ": {}"), $prog_name, $err)
-    };
-    ($prog_name:expr, $err:expr, $fmt:expr, $($arg:tt)*) => {
-        eprintln!(concat!("{}: ", $fmt, ": {}"), $prog_name, $($arg)*, $err)
-    };
+/// Extract the files from an Oberon `AsciiCoder` archive.
+///
+/// Decodes an `AsciiCoder.DecodeFiles` archive — the plain-text file encoding
+/// produced by Oberon's `AsciiCoder` — just as the Oberon command
+/// `AsciiCoder.DecodeFiles` would. The archive is read from FILE, or from standard
+/// input if none is given; each contained file is written into the output
+/// directory (the current directory by default).
+#[derive(Parser, Debug)]
+#[command(name = "asciidecoder", version)]
+struct Cli {
+    /// Print the name of each extracted file
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Extract into DIR, creating it if it does not exist
+    #[arg(short = 'C', long = "directory", value_name = "DIR")]
+    directory: Option<PathBuf>,
+
+    /// Archive to read (defaults to standard input)
+    #[arg(value_name = "FILE")]
+    file: Option<PathBuf>,
 }
-
-macro_rules! printerrx {
-    ($prog_name:expr, $fmt:expr) => {
-        eprintln!(concat!("{}: ", $fmt), $prog_name)
-    };
-    ($prog_name:expr, $fmt:expr, $($arg:tt)*) => {
-        eprintln!(concat!("{}: ", $fmt), $prog_name, $($arg)*)
-    };
-}
-
-const HELP: &str = "\
-asciidecoder - extract files from an Oberon AsciiCoder archive
-
-Extracts the files from an 'AsciiCoder.DecodeFiles' archive - the plain-text
-file encoding produced by Oberon's AsciiCoder - just as the Oberon command
-AsciiCoder.DecodeFiles would. The archive is read from FILE, or from standard
-input if no FILE is given.
-
-Usage:
-  asciidecoder [-v] [-C DIR] [FILE]
-
-Flags:
-  -v, --verbose        Print the name of each extracted file.
-  -C, --directory DIR  Extract into DIR, creating it if it does not exist.
-  -h, --help           Show this help and exit.";
 
 fn main() {
-    let mut verbose = false;
-    let mut directory = None;
-    let mut input_file = None;
+    if let Err(e) = run(&Cli::parse()) {
+        eprintln!("asciidecoder: {e}");
+        exit(1);
+    }
+}
 
-    let mut args = env::args();
-    let progname = args.next().unwrap().rsplit('/').next().unwrap().to_owned();
-    while let Some(opt) = args.next() {
-        match opt.as_str() {
-            "-v" | "--verbose" => {
-                verbose = true;
-            }
-            "-C" | "--directory" if directory.is_none() => {
-                directory = args.next();
-            }
-            "-h" | "--help" => {
-                println!("{HELP}");
-                return;
-            }
-            s if !s.starts_with('-') && input_file.is_none() => {
-                input_file = Some(opt.clone());
-            }
-            _ => {
-                eprintln!("{progname}: unrecognized argument '{opt}'");
-                eprintln!("Usage: {progname} [-v] [-C DIR] [FILE]  (try --help)");
-                exit(1)
-            }
-        }
+fn run(cli: &Cli) -> Result<(), String> {
+    let reader: Box<dyn BufRead> = match &cli.file {
+        None => Box::new(BufReader::new(stdin())),
+        Some(path) => Box::new(BufReader::new(
+            fs::File::open(path).map_err(|e| format!("can't open '{}': {e}", path.display()))?,
+        )),
+    };
+    let mut input: Box<dyn Iterator<Item = u8>> = Box::new(reader.bytes().map(Result::unwrap));
+
+    if let Some(dir) = &cli.directory {
+        fs::create_dir_all(dir)
+            .map_err(|e| format!("can't create directory '{}': {e}", dir.display()))?;
     }
 
-    let input: Box<dyn BufRead> = match input_file {
-        None => Box::new(BufReader::new(stdin())),
-        Some(filename) => match fs::File::open(&filename) {
-            Ok(f) => Box::new(BufReader::new(f)),
-            Err(e) => {
-                printerr!(progname, e, "can't open '{}'", filename);
-                exit(1)
-            }
-        },
-    };
-    let mut input: Box<dyn Iterator<Item = u8>> = Box::new(input.bytes().map(Result::unwrap));
-
-    if let Some(directory) = directory {
-        if let Err(e) = env::set_current_dir(&directory) {
-            if e.kind() != ErrorKind::NotFound {
-                printerr!(progname, e, "can't change to directory '{}'", directory);
-                exit(1);
-            }
-            if let Err(e) = fs::create_dir_all(&directory) {
-                printerr!(progname, e, "can't create directory '{}'", directory);
-                exit(1);
-            }
-            if let Err(e) = env::set_current_dir(&directory) {
-                printerr!(progname, e, "can't change to directory '{}'", directory);
-                exit(1);
-            }
-        }
+    if !skip_header(&mut input) {
+        return Err("no AsciiCoder.DecodeFiles archive found".to_string());
     }
 
     let mut compressed = false;
     let mut names = Vec::new();
-    if !skip_header(&mut input) {
-        printerrx!(progname, "no AsciiCoder.DecodeFiles archive found");
-        exit(1);
-    }
     while let Some(name) = read_name(&mut input) {
         match name.as_str() {
             "~" => break,
@@ -230,36 +196,23 @@ fn main() {
     }
 
     for name in &names {
-        if verbose {
+        if cli.verbose {
             println!("{name}");
         }
-
         let Some(mut data) = decode(&mut input) else {
-            printerrx!(progname, "can't decode '{}' (input file truncated?)", name);
-            exit(1)
+            return Err(format!("can't decode '{name}' (input file truncated?)"));
         };
         if compressed {
-            data = if let Some(vec) = decompress(&mut data.into_iter()) {
-                vec
-            } else {
-                printerrx!(progname, "can't decompress '{}'", name);
-                exit(1)
-            };
+            data = decompress(&mut data.into_iter())
+                .ok_or_else(|| format!("can't decompress '{name}'"))?;
         }
-
-        let mut file = match fs::File::create(name) {
-            Ok(f) => f,
-            Err(e) => {
-                printerr!(progname, e, "can't create file '{}'", name);
-                continue;
-            }
+        let path = match &cli.directory {
+            Some(dir) => dir.join(name),
+            None => PathBuf::from(name),
         };
-
-        if let Err(e) = file.write_all(&data) {
-            printerr!(progname, e, "can't write file '{}'", name);
-            fs::remove_file(name).unwrap();
-        }
+        fs::write(&path, &data).map_err(|e| format!("can't write '{}': {e}", path.display()))?;
     }
+    Ok(())
 }
 
 #[cfg(test)]

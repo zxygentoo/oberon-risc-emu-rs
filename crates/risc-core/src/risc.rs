@@ -7,7 +7,7 @@
 
 use crate::boot_rom::BOOTLOADER;
 use crate::fp::{fp_add, fp_div, fp_mul, idiv};
-use crate::io::{Clipboard, Led, Serial, Spi};
+use crate::io::{Clipboard, Led, NoreboHost, NoreboMem, Serial, Spi};
 
 /// Standard framebuffer width in pixels (overridable via [`Risc::configure_memory`]).
 pub const FRAMEBUFFER_WIDTH: usize = 1024;
@@ -215,6 +215,11 @@ pub struct Risc {
     spi: [Option<Box<dyn Spi>>; 4],
     clipboard: Option<Box<dyn Clipboard>>,
 
+    // When set, the machine runs in headless "Norebo" mode: the MMIO region is
+    // routed to this host (host file syscalls + stdio) instead of the FPGA
+    // device map, and it boots from an inner-core image (see `boot_inner_core`).
+    norebo: Option<Box<dyn NoreboHost>>,
+
     fb_width: i32,  // words
     fb_height: i32, // lines
     damage: Damage,
@@ -247,6 +252,7 @@ impl Risc {
             spi_selected: 0,
             spi: [None, None, None, None],
             clipboard: None,
+            norebo: None,
             fb_width,
             fb_height,
             damage: Damage {
@@ -328,6 +334,92 @@ impl Risc {
     /// Reset: jump to the boot ROM. Port of `risc_reset`.
     pub fn reset(&mut self) {
         self.pc = ROM_START / 4;
+    }
+
+    /// Reconfigure as a headless "Norebo" machine: `mem_bytes` of flat RAM with
+    /// no framebuffer carve-out (every below-`mem_bytes` access is plain RAM,
+    /// the MMIO region stays at the top). Used by the image-build toolchain.
+    pub fn configure_norebo(&mut self, mem_bytes: u32) {
+        self.mem_size = mem_bytes;
+        self.display_start = mem_bytes;
+        self.ram = vec![0u32; (mem_bytes / 4) as usize];
+    }
+
+    /// Attach the Norebo host backend (file syscalls + stdio). While set, the
+    /// MMIO region routes to it. Port of `norebo.c`'s I/O dispatch.
+    pub fn set_norebo(&mut self, host: Box<dyn NoreboHost>) {
+        self.norebo = Some(host);
+    }
+
+    /// Load a Norebo inner-core image into RAM and set up the boot registers,
+    /// mirroring `norebo.c`'s `load_inner_core` + `main`. The image is a sequence
+    /// of little-endian `(len, addr, bytes[len])` records terminated by `len == 0`.
+    /// Call [`Self::configure_norebo`] first.
+    ///
+    /// # Errors
+    /// Returns an error if the image is truncated or a record falls outside RAM.
+    pub fn boot_inner_core(&mut self, image: &[u8], stack_org: u32) -> Result<(), String> {
+        let read_u32 = |at: usize| -> Option<u32> {
+            image
+                .get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let mut p = 0usize;
+        loop {
+            let len = read_u32(p).ok_or("inner core: truncated length")?;
+            p += 4;
+            if len == 0 {
+                break;
+            }
+            let adr = read_u32(p).ok_or("inner core: truncated address")?;
+            p += 4;
+            let end = p + len as usize;
+            let bytes = image.get(p..end).ok_or("inner core: truncated data")?;
+            if u64::from(adr) + u64::from(len) > u64::from(self.mem_size) {
+                return Err(format!(
+                    "inner core record at {adr:#x} (+{len}) exceeds {} bytes of RAM",
+                    self.mem_size
+                ));
+            }
+            for (i, &byte) in bytes.iter().enumerate() {
+                let a = adr + i as u32;
+                let wi = (a / 4) as usize;
+                let shift = (a % 4) * 8;
+                self.ram[wi] = (self.ram[wi] & !(0xFFu32 << shift)) | (u32::from(byte) << shift);
+            }
+            p = end;
+        }
+        self.ram[3] = self.mem_size; // MEM[12]: memory limit
+        self.ram[6] = stack_org; // MEM[24]: stack origin
+        self.pc = 0;
+        self.r = [0u32; 16];
+        self.r[12] = 0x20;
+        self.r[14] = stack_org;
+        self.h = 0;
+        self.flags = Flags::empty();
+        Ok(())
+    }
+
+    /// Run in Norebo mode until the host halts (syscall 1 / a trap) and return its
+    /// process-style exit code. Requires [`Self::set_norebo`] + [`Self::boot_inner_core`].
+    /// Guarded by a large instruction budget so a runaway image can't hang forever.
+    pub fn norebo_run(&mut self) -> i32 {
+        let mut budget: u64 = 64_000_000_000;
+        loop {
+            if let Some(code) = self.norebo.as_ref().and_then(|h| h.exit_code()) {
+                return code;
+            }
+            if self.pc >= self.mem_size / 4 {
+                eprintln!("norebo: PC left RAM (0x{:08X})", self.pc.wrapping_mul(4));
+                return 1;
+            }
+            if budget == 0 {
+                eprintln!("norebo: instruction budget exhausted");
+                return 1;
+            }
+            budget -= 1;
+            self.single_step();
+        }
     }
 
     /// Run up to `cycles` instructions, stopping early when the CPU is detected
@@ -565,6 +657,13 @@ impl Risc {
     // Keep each offset's logic in its own arm, mirroring the C's switch.
     #[allow(clippy::collapsible_match)]
     fn load_io(&mut self, address: u32) -> u32 {
+        // Norebo mode: route the whole MMIO region to the host (disjoint field
+        // borrows of `norebo` and `ram` let the host touch guest memory).
+        if let Some(host) = self.norebo.as_mut() {
+            let offset = address.wrapping_sub(IO_START);
+            let mut mem = NoreboMem::new(&mut self.ram, self.mem_size);
+            return host.load(offset, &mut mem);
+        }
         match address.wrapping_sub(IO_START) {
             0 => {
                 // Millisecond counter.
@@ -610,6 +709,12 @@ impl Risc {
     }
 
     fn store_io(&mut self, address: u32, value: u32) {
+        if let Some(host) = self.norebo.as_mut() {
+            let offset = address.wrapping_sub(IO_START);
+            let mut mem = NoreboMem::new(&mut self.ram, self.mem_size);
+            host.store(offset, value, &mut mem);
+            return;
+        }
         match address.wrapping_sub(IO_START) {
             4 => {
                 // LED control.

@@ -2,13 +2,21 @@
 name = "oberon-tools"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-description = "Host-side utilities for Oberon texts and AsciiCoder archives"
+license = "ISC"
+description = "Host-side Oberon tools: text/archive converters and a Project Oberon disk-image builder"
 
-# Two standalone, dependency-free CLI tools, auto-discovered from src/bin/:
-#   ob2unix       - dump the ASCII content of an Oberon Text file
+# CLI tools, auto-discovered from src/bin/:
+#   ob2unix       - dump the plain-text content of an Oberon Text file
 #   asciidecoder  - unpack an 'AsciiCoder.DecodeFiles' archive
-# Ported from the upstream oberon-risc-emu C repo's tools/ (themselves Rust).
+#   build-image   - compile Project Oberon and assemble a runnable disk image
+# ob2unix/asciidecoder are pure std; build-image uses the headless "Norebo"
+# runtime in src/lib.rs (a Rust port of project-norebo) on the risc-core CPU.
+
+[dependencies]
+# CLI parsing for all three tools (clap 4 derive is already used by the `risc` frontend).
+clap = { version = "4", features = ["derive"] }
+# Used only by build-image (via src/lib.rs); the file converters don't.
+risc-core = { path = "../risc-core" }
 
 [lints]
 workspace = true

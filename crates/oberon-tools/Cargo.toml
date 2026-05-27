@@ -1,0 +1,14 @@
+[package]
+name = "oberon-tools"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Host-side utilities for Oberon texts and AsciiCoder archives"
+
+# Two standalone, dependency-free CLI tools, auto-discovered from src/bin/:
+#   ob2unix       - dump the ASCII content of an Oberon Text file
+#   asciidecoder  - unpack an 'AsciiCoder.DecodeFiles' archive
+# Ported from the upstream oberon-risc-emu C repo's tools/ (themselves Rust).
+
+[lints]
+workspace = true

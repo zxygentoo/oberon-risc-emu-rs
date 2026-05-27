@@ -10,8 +10,10 @@ image to the interactive desktop.
   [`softbuffer`](https://crates.io/crates/softbuffer) +
   [`arboard`](https://crates.io/crates/arboard).
 - **Workspace** — a dependency-light [`risc-core`](crates/risc-core) library
-  (CPU, software FP, MMIO, disk, serial) plus the top-level `oberon-risc-emu`
-  crate: the windowing frontend, which builds the `risc` executable you run.
+  (CPU, software FP, MMIO, disk, serial), the top-level `oberon-risc-emu`
+  crate (the windowing frontend, which builds the `risc` executable you run),
+  and [`oberon-tools`](crates/oberon-tools): standalone host utilities for
+  Oberon files.
 - **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
   live co-simulation — save one [documented divergence](DIVERGENCES.md).
 
@@ -73,6 +75,31 @@ clipboard (via [`arboard`](https://crates.io/crates/arboard)). Middle-click:
 - `Clipboard.Paste` — insert the host clipboard at the caret.
 - `Clipboard.CopySelection` — copy the current text selection to the host.
 - `Clipboard.CopyViewer` — copy the focused viewer to the host.
+
+## Host file tools
+
+The [`oberon-tools`](crates/oberon-tools) crate has two small, dependency-free
+command-line utilities for working with Oberon files on the host, ported from
+upstream's `tools/`:
+
+- **`ob2unix`** — dump the plain-text content of an Oberon text: drops the
+  binary header and converts CR line endings to LF. Input that is not an Oberon
+  text passes through unchanged.
+
+  ```sh
+  cargo run -p oberon-tools --bin ob2unix < Input.Mod > input.txt
+  ```
+
+- **`asciidecoder`** — extract the files from an `AsciiCoder.DecodeFiles`
+  archive (the plain-text file encoding produced by Oberon's AsciiCoder). Reads
+  the archive from a file or stdin; `-v` lists each extracted name, `-C DIR`
+  sets the output directory.
+
+  ```sh
+  cargo run -p oberon-tools --bin asciidecoder -- -v -C outdir archive.txt
+  ```
+
+Pass `--help` to either for full usage.
 
 ## Known issues
 

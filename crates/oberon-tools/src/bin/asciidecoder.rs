@@ -1,7 +1,7 @@
 //! Extract the files from an Oberon `AsciiCoder` archive (`AsciiCoder.DecodeFiles`).
 
 use std::fs;
-use std::io::{stdin, BufRead, BufReader, Read};
+use std::io::{stdin, BufRead, BufReader, IsTerminal, Read};
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -169,7 +169,17 @@ fn main() {
 
 fn run(cli: &Cli) -> Result<(), String> {
     let reader: Box<dyn BufRead> = match &cli.file {
-        None => Box::new(BufReader::new(stdin())),
+        None => {
+            if stdin().is_terminal() {
+                // No FILE and nothing piped in: reading the terminal would hang.
+                return Err(
+                    "no FILE given and standard input is a terminal; pass a FILE argument or pipe an archive in.\n\
+                     For more information, try '--help'."
+                        .to_string(),
+                );
+            }
+            Box::new(BufReader::new(stdin()))
+        }
         Some(path) => Box::new(BufReader::new(
             fs::File::open(path).map_err(|e| format!("can't open '{}': {e}", path.display()))?,
         )),

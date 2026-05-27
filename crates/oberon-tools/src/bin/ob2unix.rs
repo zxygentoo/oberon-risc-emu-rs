@@ -1,24 +1,34 @@
 //! Dump the plain-text content of an Oberon text.
 
-use std::io::{self, copy, sink, stdin, stdout, Read};
+use std::fs;
+use std::io::{self, copy, sink, stdout, Read};
+use std::path::{Path, PathBuf};
 use std::process::exit;
 
 use clap::Parser;
 
 /// Dump the plain-text content of an Oberon text.
 ///
-/// Reads an Oberon text (such as a .Text, .Mod or .Tool file) on standard input
-/// and writes its content to standard output: it drops the binary file header
-/// and converts CR line endings to LF. Input that is not an Oberon text is
-/// copied through unchanged. The conversion is deliberately crude — it does not
+/// Reads an Oberon text (such as a .Text, .Mod or .Tool file) from FILE and
+/// writes its content to standard output: it drops the binary file header and
+/// converts CR line endings to LF. A file that is not an Oberon text is copied
+/// through unchanged. The conversion is deliberately crude — it does not
 /// interpret the formatting information an Oberon text can carry, so some
 /// non-text bytes may pass through.
+///
+/// The input is a binary file, so it is taken as a FILE argument rather than
+/// read from standard input (which could only be piped, never typed).
 #[derive(Parser, Debug)]
 #[command(name = "ob2unix", version)]
-struct Cli {}
+struct Cli {
+    /// Oberon text to convert (e.g. a .Text, .Mod or .Tool file)
+    #[arg(value_name = "FILE")]
+    file: PathBuf,
+}
 
-fn ob2unix() -> io::Result<()> {
-    let mut input = stdin();
+fn ob2unix(path: &Path) -> io::Result<()> {
+    let mut input = fs::File::open(path)
+        .map_err(|e| io::Error::new(e.kind(), format!("can't open '{}': {e}", path.display())))?;
     let mut output = stdout();
 
     let mut buf = [0u8; 1024];
@@ -57,8 +67,8 @@ fn ob2unix() -> io::Result<()> {
 }
 
 fn main() {
-    Cli::parse();
-    if let Err(e) = ob2unix() {
+    let cli = Cli::parse();
+    if let Err(e) = ob2unix(&cli.file) {
         eprintln!("ob2unix: {e}");
         exit(1);
     }

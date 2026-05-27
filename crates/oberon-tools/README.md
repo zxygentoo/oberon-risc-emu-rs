@@ -13,11 +13,12 @@ auto-discovered from [`src/bin/`](src/bin); all three use
 
 ## ob2unix
 
-Drops the binary Oberon-text header and converts CR line endings to LF (input
-that isn't an Oberon text passes through unchanged). Reads stdin, writes stdout:
+Drops the binary Oberon-text header and converts CR line endings to LF (a file
+that isn't an Oberon text passes through unchanged). Takes the file to convert as
+an argument and writes to stdout:
 
 ```sh
-cargo run -p oberon-tools --bin ob2unix < Input.Mod > input.txt
+cargo run -p oberon-tools --bin ob2unix -- Input.Mod > input.txt
 ```
 
 ## asciidecoder

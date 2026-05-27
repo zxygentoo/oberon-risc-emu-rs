@@ -86,10 +86,11 @@ headless Oberon on the `risc-core` CPU (a port of
 [`project-norebo`](https://github.com/pdewacht/project-norebo)).
 
 - **`ob2unix`** — dump the plain-text content of an Oberon text: drops the binary
-  header and converts CR line endings to LF (non-Oberon input passes through):
+  header and converts CR line endings to LF (a non-Oberon file passes through). It
+  takes the file to convert as an argument:
 
   ```sh
-  cargo run -p oberon-tools --bin ob2unix < Input.Mod > input.txt
+  cargo run -p oberon-tools --bin ob2unix -- Input.Mod > input.txt
   ```
 
 - **`asciidecoder`** — extract the files from an `AsciiCoder.DecodeFiles` archive;

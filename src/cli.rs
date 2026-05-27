@@ -108,7 +108,9 @@ impl Cli {
 
         if self.disk_image.is_none() && !self.boot_from_serial {
             return Err(Error::Config(
-                "a DISK-IMAGE is required (or pass --boot-from-serial)".into(),
+                "a DISK-IMAGE is required (or pass --boot-from-serial).\n\
+                 For more information, try '--help'."
+                    .into(),
             ));
         }
 
@@ -157,8 +159,8 @@ mod tests {
 
     #[test]
     fn requires_disk_image_unless_boot_from_serial() {
-        let cli = Cli::parse_from(["risc"]);
-        assert!(cli.into_config().is_err());
+        let err = Cli::parse_from(["risc"]).into_config().err().unwrap();
+        assert!(err.to_string().contains("--help")); // points at usage, doesn't hang
         let cli = Cli::parse_from(["risc", "--boot-from-serial"]);
         assert!(cli.into_config().is_ok());
         let cli = Cli::parse_from(["risc", "disk.dsk"]);

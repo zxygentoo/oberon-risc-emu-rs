@@ -52,9 +52,18 @@ fn oberon_text(header_len: u32, body: &[u8]) -> Vec<u8> {
     v
 }
 
+/// Write `bytes` to a uniquely named file under the test target dir and return
+/// its path. `ob2unix` takes the text to convert as a FILE argument.
+fn input_file(name: &str, bytes: &[u8]) -> PathBuf {
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    std::fs::write(&path, bytes).expect("failed to write input file");
+    path
+}
+
 #[test]
 fn ob2unix_converts_oberon_text() {
-    let out = run(OB2UNIX, &[], &oberon_text(8, b"A\rB\rC"));
+    let f = input_file("ob2unix_convert.bin", &oberon_text(8, b"A\rB\rC"));
+    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
     assert!(out.status.success());
     assert_eq!(out.stdout, b"A\nB\nC");
 }
@@ -62,22 +71,25 @@ fn ob2unix_converts_oberon_text() {
 #[test]
 fn ob2unix_converts_body_larger_than_buffer() {
     // 3000 > the 1024-byte internal buffer, so the read/convert loop iterates.
-    let out = run(OB2UNIX, &[], &oberon_text(6, &vec![b'\r'; 3000]));
+    let f = input_file("ob2unix_large.bin", &oberon_text(6, &vec![b'\r'; 3000]));
+    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
     assert!(out.status.success());
     assert_eq!(out.stdout, vec![b'\n'; 3000]);
 }
 
 #[test]
-fn ob2unix_passes_through_non_oberon_input() {
+fn ob2unix_passes_through_non_oberon_file() {
     // No Oberon magic: copied verbatim, CR kept.
-    let out = run(OB2UNIX, &[], b"plain\r text");
+    let f = input_file("ob2unix_plain.bin", b"plain\r text");
+    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
     assert!(out.status.success());
     assert_eq!(out.stdout, b"plain\r text");
 }
 
 #[test]
-fn ob2unix_handles_empty_input() {
-    let out = run(OB2UNIX, &[], b"");
+fn ob2unix_handles_empty_file() {
+    let f = input_file("ob2unix_empty.bin", b"");
+    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
     assert!(out.status.success());
     assert!(out.stdout.is_empty());
 }
@@ -91,10 +103,27 @@ fn ob2unix_help_goes_to_stdout() {
 }
 
 #[test]
-fn ob2unix_rejects_unexpected_argument() {
-    let out = run(OB2UNIX, &["nope"], b"");
-    assert_eq!(out.status.code(), Some(2)); // clap usage error
+fn ob2unix_requires_a_file_argument() {
+    // No FILE: clap fails fast (exit 2) and points at --help, rather than hanging.
+    let out = run(OB2UNIX, &[], b"");
+    assert_eq!(out.status.code(), Some(2));
     assert!(out.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("required"));
+    assert!(stderr.contains("--help"));
+}
+
+#[test]
+fn ob2unix_errors_on_missing_file() {
+    let out = run(OB2UNIX, &["does-not-exist.Mod"], b"");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("can't open 'does-not-exist.Mod'"));
+}
+
+#[test]
+fn ob2unix_rejects_extra_argument() {
+    let out = run(OB2UNIX, &["a.Mod", "b.Mod"], b"");
+    assert_eq!(out.status.code(), Some(2)); // clap usage error
     assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
 }
 

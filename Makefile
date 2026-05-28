@@ -16,7 +16,7 @@ all:
 oberon:
 	$(CARGO) run --release -- $(DISK)
 
-# Host tools -> target/release/{ob2unix,asciidecoder,norebo,build-image}
+# Host tools -> target/release/{ob2unix,asciidecoder,build-image}
 tools:
 	$(CARGO) build --release -p oberon-tools
 	@echo

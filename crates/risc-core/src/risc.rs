@@ -7,7 +7,7 @@
 
 use crate::boot_rom::BOOTLOADER;
 use crate::fp::{fp_add, fp_div, fp_mul, idiv};
-use crate::io::{Clipboard, Led, NoreboHost, NoreboMem, Serial, Spi};
+use crate::io::{Clipboard, Led, Serial, ShimHost, ShimMem, Spi};
 
 /// Standard framebuffer width in pixels (overridable via [`Risc::configure_memory`]).
 pub const FRAMEBUFFER_WIDTH: usize = 1024;
@@ -215,10 +215,10 @@ pub struct Risc {
     spi: [Option<Box<dyn Spi>>; 4],
     clipboard: Option<Box<dyn Clipboard>>,
 
-    // When set, the machine runs in headless "Norebo" mode: the MMIO region is
+    // When set, the machine runs in headless "shim" mode: the MMIO region is
     // routed to this host (host file syscalls + stdio) instead of the FPGA
     // device map, and it boots from an inner-core image (see `boot_inner_core`).
-    norebo: Option<Box<dyn NoreboHost>>,
+    shim: Option<Box<dyn ShimHost>>,
 
     fb_width: i32,  // words
     fb_height: i32, // lines
@@ -252,7 +252,7 @@ impl Risc {
             spi_selected: 0,
             spi: [None, None, None, None],
             clipboard: None,
-            norebo: None,
+            shim: None,
             fb_width,
             fb_height,
             damage: Damage {
@@ -336,25 +336,25 @@ impl Risc {
         self.pc = ROM_START / 4;
     }
 
-    /// Reconfigure as a headless "Norebo" machine: `mem_bytes` of flat RAM with
+    /// Reconfigure as a headless "shim" machine: `mem_bytes` of flat RAM with
     /// no framebuffer carve-out (every below-`mem_bytes` access is plain RAM,
     /// the MMIO region stays at the top). Used by the image-build toolchain.
-    pub fn configure_norebo(&mut self, mem_bytes: u32) {
+    pub fn configure_shim(&mut self, mem_bytes: u32) {
         self.mem_size = mem_bytes;
         self.display_start = mem_bytes;
         self.ram = vec![0u32; (mem_bytes / 4) as usize];
     }
 
-    /// Attach the Norebo host backend (file syscalls + stdio). While set, the
+    /// Attach the shim host backend (file syscalls + stdio). While set, the
     /// MMIO region routes to it. Port of `norebo.c`'s I/O dispatch.
-    pub fn set_norebo(&mut self, host: Box<dyn NoreboHost>) {
-        self.norebo = Some(host);
+    pub fn set_shim(&mut self, host: Box<dyn ShimHost>) {
+        self.shim = Some(host);
     }
 
-    /// Load a Norebo inner-core image into RAM and set up the boot registers,
+    /// Load an inner-core image into RAM and set up the boot registers,
     /// mirroring `norebo.c`'s `load_inner_core` + `main`. The image is a sequence
     /// of little-endian `(len, addr, bytes[len])` records terminated by `len == 0`.
-    /// Call [`Self::configure_norebo`] first.
+    /// Call [`Self::configure_shim`] first.
     ///
     /// # Errors
     /// Returns an error if the image is truncated or a record falls outside RAM.
@@ -400,21 +400,21 @@ impl Risc {
         Ok(())
     }
 
-    /// Run in Norebo mode until the host halts (syscall 1 / a trap) and return its
-    /// process-style exit code. Requires [`Self::set_norebo`] + [`Self::boot_inner_core`].
+    /// Run in shim mode until the host halts (syscall 1 / a trap) and return its
+    /// process-style exit code. Requires [`Self::set_shim`] + [`Self::boot_inner_core`].
     /// Guarded by a large instruction budget so a runaway image can't hang forever.
-    pub fn norebo_run(&mut self) -> i32 {
+    pub fn shim_run(&mut self) -> i32 {
         let mut budget: u64 = 64_000_000_000;
         loop {
-            if let Some(code) = self.norebo.as_ref().and_then(|h| h.exit_code()) {
+            if let Some(code) = self.shim.as_ref().and_then(|h| h.exit_code()) {
                 return code;
             }
             if self.pc >= self.mem_size / 4 {
-                eprintln!("norebo: PC left RAM (0x{:08X})", self.pc.wrapping_mul(4));
+                eprintln!("shim: PC left RAM (0x{:08X})", self.pc.wrapping_mul(4));
                 return 1;
             }
             if budget == 0 {
-                eprintln!("norebo: instruction budget exhausted");
+                eprintln!("shim: instruction budget exhausted");
                 return 1;
             }
             budget -= 1;
@@ -657,11 +657,11 @@ impl Risc {
     // Keep each offset's logic in its own arm, mirroring the C's switch.
     #[allow(clippy::collapsible_match)]
     fn load_io(&mut self, address: u32) -> u32 {
-        // Norebo mode: route the whole MMIO region to the host (disjoint field
-        // borrows of `norebo` and `ram` let the host touch guest memory).
-        if let Some(host) = self.norebo.as_mut() {
+        // shim mode: route the whole MMIO region to the host (disjoint field
+        // borrows of `shim` and `ram` let the host touch guest memory).
+        if let Some(host) = self.shim.as_mut() {
             let offset = address.wrapping_sub(IO_START);
-            let mut mem = NoreboMem::new(&mut self.ram, self.mem_size);
+            let mut mem = ShimMem::new(&mut self.ram, self.mem_size);
             return host.load(offset, &mut mem);
         }
         match address.wrapping_sub(IO_START) {
@@ -709,9 +709,9 @@ impl Risc {
     }
 
     fn store_io(&mut self, address: u32, value: u32) {
-        if let Some(host) = self.norebo.as_mut() {
+        if let Some(host) = self.shim.as_mut() {
             let offset = address.wrapping_sub(IO_START);
-            let mut mem = NoreboMem::new(&mut self.ram, self.mem_size);
+            let mut mem = ShimMem::new(&mut self.ram, self.mem_size);
             host.store(offset, value, &mut mem);
             return;
         }

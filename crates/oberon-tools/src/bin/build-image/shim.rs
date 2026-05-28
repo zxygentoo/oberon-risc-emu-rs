@@ -1,8 +1,8 @@
-//! Headless "Norebo" runtime: drive the [`risc_core`] CPU from an inner-core
+//! Headless "shim" runtime: drive the [`risc_core`] CPU from an inner-core
 //! image, mapping Oberon's `Kernel`/`Files`/`FileDir` operations onto the host
 //! filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
 //!
-//! [`run_norebo`] runs one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to
+//! [`run`] runs one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to
 //! completion and returns its exit code; the `build-image` binary drives it
 //! repeatedly to compile Project Oberon and assemble a disk image.
 
@@ -11,10 +11,10 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use risc_core::io::{NoreboHost, NoreboMem};
+use risc_core::io::{ShimHost, ShimMem};
 use risc_core::risc::Risc;
 
-/// Norebo's fixed RAM size (`norebo.c` `MemBytes`).
+/// Fixed RAM size (`norebo.c` `MemBytes`).
 const MEM_BYTES: u32 = 8 * 1024 * 1024;
 /// Stack origin (`norebo.c` `StackOrg`).
 const STACK_ORG: u32 = 0x0008_0000;
@@ -30,19 +30,19 @@ const NAME_LEN: usize = 32;
 ///
 /// # Errors
 /// Fails if the `InnerCore` image cannot be found/read or is malformed.
-pub fn run_norebo(args: &[String], cwd: &Path, path: &[PathBuf]) -> io::Result<i32> {
+pub fn run(args: &[String], cwd: &Path, path: &[PathBuf]) -> io::Result<i32> {
     let image = find_file(cwd, path, "InnerCore")?;
     let host = Host::new(cwd.to_path_buf(), path.to_vec(), args.to_vec());
 
     let mut risc = Risc::new();
-    risc.configure_norebo(MEM_BYTES);
-    risc.set_norebo(Box::new(host));
+    risc.configure_shim(MEM_BYTES);
+    risc.set_shim(Box::new(host));
     risc.boot_inner_core(&image, STACK_ORG)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     // `risc` (and the host it owns) drop at the end of this scope, flushing any
     // files the guest left open — so persistence happens before we return.
-    Ok(risc.norebo_run())
+    Ok(risc.shim_run())
 }
 
 /// Look up `name` in `cwd`, then in each `path` directory; return its bytes.
@@ -57,13 +57,13 @@ fn find_file(cwd: &Path, path: &[PathBuf], name: &str) -> io::Result<Vec<u8>> {
     }
     Err(io::Error::new(
         io::ErrorKind::NotFound,
-        format!("can't find '{name}' in cwd or NOREBO_PATH"),
+        format!("can't find '{name}' in cwd or search path"),
     ))
 }
 
 /// One open file. New (unregistered) files are anonymous in-memory buffers;
 /// `Register`/`Old` give them a `persist` path that is rewritten on close/drop
-/// if dirty (read-only `NOREBO_PATH` opens keep `persist == None`).
+/// if dirty (read-only search-path opens keep `persist == None`).
 struct OpenFile {
     data: Vec<u8>,
     pos: u64,
@@ -78,7 +78,7 @@ impl OpenFile {
         if self.dirty {
             if let Some(p) = &self.persist {
                 if let Err(e) = fs::write(p, &self.data) {
-                    eprintln!("norebo: can't write '{}': {e}", p.display());
+                    eprintln!("shim: can't write '{}': {e}", p.display());
                 }
             }
             self.dirty = false;
@@ -86,7 +86,7 @@ impl OpenFile {
     }
 }
 
-/// The Norebo host: command-line args, the open-file table, and the syscall ABI.
+/// The shim host: command-line args, the open-file table, and the syscall ABI.
 struct Host {
     cwd: PathBuf,
     path: Vec<PathBuf>,
@@ -128,12 +128,12 @@ impl Host {
             }
         }
         self.exit = Some(1);
-        eprintln!("norebo: too many open files");
+        eprintln!("shim: too many open files");
         u32::MAX
     }
 
     /// Dispatch syscall `n` with the latched arguments. Port of `sysreq_exec`.
-    fn sysreq(&mut self, n: u32, mem: &mut NoreboMem) -> u32 {
+    fn sysreq(&mut self, n: u32, mem: &mut ShimMem) -> u32 {
         let [a0, a1, a2] = self.sysarg;
         match n {
             1 => {
@@ -164,14 +164,14 @@ impl Host {
                 0
             }
             _ => {
-                eprintln!("norebo: unimplemented syscall {n}");
+                eprintln!("shim: unimplemented syscall {n}");
                 self.exit = Some(1);
                 0
             }
         }
     }
 
-    fn argv(&mut self, idx: u32, adr: u32, siz: u32, mem: &mut NoreboMem) -> u32 {
+    fn argv(&mut self, idx: u32, adr: u32, siz: u32, mem: &mut ShimMem) -> u32 {
         let Some(arg) = self.args.get(idx as usize) else {
             return u32::MAX;
         };
@@ -186,7 +186,7 @@ impl Host {
         bytes.len() as u32
     }
 
-    fn trap(&mut self, trap: u32, name_adr: u32, pos: u32, mem: &mut NoreboMem) -> u32 {
+    fn trap(&mut self, trap: u32, name_adr: u32, pos: u32, mem: &mut ShimMem) -> u32 {
         let msg = match trap {
             1 => "array index out of range",
             2 => "type guard failure",
@@ -198,12 +198,12 @@ impl Host {
             _ => "unknown trap",
         };
         let name = read_name(mem, name_adr).unwrap_or_else(|| "(unknown)".to_string());
-        eprintln!("norebo: {msg} at {name} pos {pos}");
+        eprintln!("shim: {msg} at {name} pos {pos}");
         self.exit = Some(100 + trap as i32);
         0
     }
 
-    fn files_new(&mut self, adr: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_new(&mut self, adr: u32, mem: &mut ShimMem) -> u32 {
         let Some(name) = read_name(mem, adr) else {
             return u32::MAX;
         };
@@ -217,11 +217,11 @@ impl Host {
         })
     }
 
-    fn files_old(&mut self, adr: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_old(&mut self, adr: u32, mem: &mut ShimMem) -> u32 {
         let Some(name) = read_name(mem, adr) else {
             return u32::MAX;
         };
-        // First the working directory (read-write), then NOREBO_PATH (read-only).
+        // First the working directory (read-write), then the search path (read-only).
         let cwd_path = self.cwd.join(&name);
         if let Ok(data) = fs::read(&cwd_path) {
             return self.allocate(OpenFile {
@@ -254,7 +254,7 @@ impl Host {
             if !f.registered && !f.name.is_empty() {
                 let p = cwd.join(&f.name);
                 if let Err(e) = fs::write(&p, &f.data) {
-                    eprintln!("norebo: can't create '{}': {e}", p.display());
+                    eprintln!("shim: can't create '{}': {e}", p.display());
                     return u32::MAX;
                 }
                 f.persist = Some(p);
@@ -288,21 +288,21 @@ impl Host {
         0
     }
 
-    fn files_read(&mut self, h: u32, adr: u32, siz: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_read(&mut self, h: u32, adr: u32, siz: u32, mem: &mut ShimMem) -> u32 {
         let Some(f) = self.file_mut(h) else {
             return 0;
         };
         let start = f.pos as usize;
         let avail = f.data.len().saturating_sub(start);
         let n = (siz as usize).min(avail);
-        let mut buf = vec![0u8; siz as usize]; // tail is zero-filled, as in norebo
+        let mut buf = vec![0u8; siz as usize]; // tail is zero-filled, as in `norebo.c`
         buf[..n].copy_from_slice(&f.data[start..start + n]);
         f.pos += n as u64;
         mem.write_bytes(adr, &buf);
         n as u32
     }
 
-    fn files_write(&mut self, h: u32, adr: u32, siz: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_write(&mut self, h: u32, adr: u32, siz: u32, mem: &mut ShimMem) -> u32 {
         let Some(f) = self.file_mut(h) else {
             return 0;
         };
@@ -317,14 +317,14 @@ impl Host {
         siz
     }
 
-    fn files_delete(&mut self, adr: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_delete(&mut self, adr: u32, mem: &mut ShimMem) -> u32 {
         match read_name(mem, adr) {
             Some(name) if !name.is_empty() && fs::remove_file(self.cwd.join(&name)).is_ok() => 0,
             _ => u32::MAX,
         }
     }
 
-    fn files_rename(&mut self, old_adr: u32, new_adr: u32, mem: &mut NoreboMem) -> u32 {
+    fn files_rename(&mut self, old_adr: u32, new_adr: u32, mem: &mut ShimMem) -> u32 {
         let (Some(old), Some(new)) = (read_name(mem, old_adr), read_name(mem, new_adr)) else {
             return u32::MAX;
         };
@@ -353,7 +353,7 @@ impl Host {
         0
     }
 
-    fn enumerate_next(&mut self, adr: u32, mem: &mut NoreboMem) -> u32 {
+    fn enumerate_next(&mut self, adr: u32, mem: &mut ShimMem) -> u32 {
         if let Some(name) = self.enumerate.next() {
             let mut buf = [0u8; NAME_LEN];
             let bytes = name.as_bytes();
@@ -368,8 +368,8 @@ impl Host {
     }
 }
 
-impl NoreboHost for Host {
-    fn load(&mut self, offset: u32, _mem: &mut NoreboMem) -> u32 {
+impl ShimHost for Host {
+    fn load(&mut self, offset: u32, _mem: &mut ShimMem) -> u32 {
         match offset {
             0 => self.start.elapsed().as_millis() as u32, // millisecond clock
             8 => read_stdin_byte(),                       // getchar
@@ -382,7 +382,7 @@ impl NoreboHost for Host {
         }
     }
 
-    fn store(&mut self, offset: u32, value: u32, mem: &mut NoreboMem) {
+    fn store(&mut self, offset: u32, value: u32, mem: &mut ShimMem) {
         match offset {
             8 => {
                 // putchar
@@ -414,7 +414,7 @@ impl Drop for Host {
 
 /// Read a 32-byte Oberon file name at `adr`, validating it. `Some("")` is a
 /// valid (empty) name; `None` means an illegal character or no terminator.
-fn read_name(mem: &NoreboMem, adr: u32) -> Option<String> {
+fn read_name(mem: &ShimMem, adr: u32) -> Option<String> {
     let mut buf = [0u8; NAME_LEN];
     mem.read_bytes(adr, &mut buf);
     let mut s = String::new();
@@ -432,7 +432,7 @@ fn read_name(mem: &NoreboMem, adr: u32) -> Option<String> {
 }
 
 /// Whether `bytes` (a NUL-terminated name, or a directory entry) is a legal
-/// Oberon file name, matching norebo's `files_check_name`.
+/// Oberon file name, matching `norebo.c`'s `files_check_name`.
 fn valid_name(bytes: &[u8]) -> bool {
     if bytes.is_empty() || bytes.len() >= NAME_LEN {
         return false;
@@ -446,7 +446,7 @@ fn valid_name(bytes: &[u8]) -> bool {
     true
 }
 
-/// One byte from stdin, or `0xFFFF_FFFF` at EOF (norebo's `getchar` convention).
+/// One byte from stdin, or `0xFFFF_FFFF` at EOF (`norebo.c`'s `getchar` convention).
 fn read_stdin_byte() -> u32 {
     let mut b = [0u8; 1];
     match io::stdin().lock().read(&mut b) {

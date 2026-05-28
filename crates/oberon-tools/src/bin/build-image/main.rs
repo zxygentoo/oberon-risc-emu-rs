@@ -1,5 +1,5 @@
 //! `build-image` — assemble a Project Oberon disk image with our in-process
-//! `norebo` engine (a Rust take on project-norebo's `build-image.py`).
+//! `shim` engine (a Rust take on project-norebo's `build-image.py`).
 //!
 //! Usage: `build-image <sources_dir> <output.dsk>`
 //!
@@ -16,8 +16,8 @@ use std::{fs, io};
 
 use clap::Parser;
 
-mod norebo;
-use norebo::run_norebo;
+mod shim;
+use shim::run;
 
 /// Modules compiled to seed the host toolchain, then linked into a fresh inner
 /// core (project-norebo's `build_norebo` set). The host versions of
@@ -265,7 +265,7 @@ fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
         &[toolchain.clone(), sources.to_path_buf()],
     )?;
     bulk_rename(&norebo_dir, "rsc", "rsx")?;
-    norebo(
+    run_checked(
         &["CoreLinker.LinkSerial", "Modules", "InnerCore"],
         &norebo_dir,
         &[toolchain],
@@ -304,7 +304,7 @@ fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
 
     eprintln!("Linking the Inner Core");
     bulk_rename(&oberon_dir, "rsc", "rsx")?;
-    norebo(
+    run_checked(
         &["CoreLinker.LinkDisk", "Modules", "Oberon.dsk"],
         scratch,
         &[oberon_dir.clone(), norebo_dir.clone()],
@@ -326,7 +326,7 @@ fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
         install.push(format!("{rsx}=>{rsc}"));
     }
     let install: Vec<&str> = install.iter().map(String::as_str).collect();
-    norebo(
+    run_checked(
         &install,
         scratch,
         &[oberon_dir, sources.to_path_buf(), norebo_dir],
@@ -349,16 +349,16 @@ fn compile(modules: &[&str], cwd: &Path, path: &[PathBuf]) -> io::Result<()> {
     let mut args = vec!["ORP.Compile".to_string()];
     args.extend(modules.iter().map(|m| format!("{m}/s")));
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    norebo(&args, cwd, path)
+    run_checked(&args, cwd, path)
 }
 
-/// Run one Norebo command in-process, erroring on a non-zero exit code.
-fn norebo(args: &[&str], cwd: &Path, path: &[PathBuf]) -> io::Result<()> {
+/// Run one Oberon command through the shim, erroring on a non-zero exit code.
+fn run_checked(args: &[&str], cwd: &Path, path: &[PathBuf]) -> io::Result<()> {
     let owned: Vec<String> = args.iter().map(|&s| s.to_owned()).collect();
-    let code = run_norebo(&owned, cwd, path)?;
+    let code = run(&owned, cwd, path)?;
     if code != 0 {
         return Err(io::Error::other(format!(
-            "norebo {} exited with code {code}",
+            "{} exited with code {code}",
             args.first().copied().unwrap_or("?")
         )));
     }

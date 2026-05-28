@@ -45,8 +45,8 @@ bootstrap objects that seed the first compile are embedded in the binary (see
 cargo run -p oberon-tools --release --bin build-image -- path/to/sources out.dsk
 ```
 
-The headless runtime is also exposed as a library: [`run_norebo`](src/lib.rs)
-executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion against
+Internally the headless runtime is one function — [`shim::run`](src/bin/build-image/shim.rs) —
+which executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion against
 the host filesystem and returns its guest exit code; `build-image` drives it
 repeatedly to compile the system and lay down the disk.
 

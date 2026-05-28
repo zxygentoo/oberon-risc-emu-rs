@@ -32,16 +32,16 @@ pub trait Led {
     fn write(&mut self, value: u32);
 }
 
-/// A byte-addressable view of the machine's RAM, handed to a [`NoreboHost`] so
+/// A byte-addressable view of the machine's RAM, handed to a [`ShimHost`] so
 /// host syscalls can read their arguments and read/write file data directly in
-/// the emulated memory (the C `norebo` operates on a global `mem[]` array; this
+/// the emulated memory (the original `norebo.c` operates on a global `mem[]` array; this
 /// is the borrow-safe equivalent).
-pub struct NoreboMem<'a> {
+pub struct ShimMem<'a> {
     ram: &'a mut [u32],
     size: u32,
 }
 
-impl<'a> NoreboMem<'a> {
+impl<'a> ShimMem<'a> {
     /// Wrap a RAM word-slice of `size` bytes.
     pub fn new(ram: &'a mut [u32], size: u32) -> Self {
         Self { ram, size }
@@ -84,19 +84,19 @@ impl<'a> NoreboMem<'a> {
     }
 }
 
-/// The Norebo host: the syscall/IO backend that maps Oberon's `Kernel`/`Files`
+/// The shim host: the syscall/IO backend that maps Oberon's `Kernel`/`Files`
 /// operations onto the host (a port of `norebo.c`). When a [`crate::risc::Risc`]
 /// has one attached it routes the MMIO region through these calls instead of the
 /// FPGA device map, and boots from an inner-core image rather than the disk.
 ///
-/// `offset` is the MMIO byte offset (`address - 0xFFFFFFC0`, i.e. norebo's
+/// `offset` is the MMIO byte offset (`address - 0xFFFFFFC0`, i.e. `norebo.c`'s
 /// `adr + 64`): `0` clock, `4` LEDs, `8` stdin/stdout, `12` status, `48/52/56`
 /// syscall args 2/1/0, `60` syscall trigger / result.
-pub trait NoreboHost {
+pub trait ShimHost {
     /// Read the MMIO word at `offset`.
-    fn load(&mut self, offset: u32, mem: &mut NoreboMem) -> u32;
+    fn load(&mut self, offset: u32, mem: &mut ShimMem) -> u32;
     /// Write `value` to the MMIO word at `offset` (offset 60 dispatches a syscall).
-    fn store(&mut self, offset: u32, value: u32, mem: &mut NoreboMem);
+    fn store(&mut self, offset: u32, value: u32, mem: &mut ShimMem);
     /// `Some(code)` once the guest has halted (syscall 1) or trapped.
     fn exit_code(&self) -> Option<i32>;
 }

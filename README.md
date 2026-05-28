@@ -17,43 +17,47 @@ image to the interactive desktop.
 - **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
   live co-simulation — save one [documented divergence](DIVERGENCES.md).
 
-## Build
+## Quickstart
+
+If you already have cargo installed and just want to play with the Oberon system, run:
 
 ```sh
-make                                # the emulator -> target/release/risc  (make tools: host tools)
-cargo build --workspace --release   # everything: emulator, core, and the host tools
-cargo build -p risc-core            # core alone, no GUI/system libs
+make oberon
 ```
 
-The release build produces the emulator binary at `target/release/risc`. The
-examples below invoke it with `cargo run --release -- …`; once built you can run
-`target/release/risc …` directly (or `cargo install --path .` to put `risc` on
-your `PATH`).
+This builds the emulator and boots `Oberon-2020-08-18.dsk` from [`DiskImage/`](DiskImage).
 
-## Run
+## Other Make targets
 
-A disk image is bundled under [`DiskImage/`](DiskImage):
+A `Makefile` wraps Cargo for the common workflows:
 
-```sh
-cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
-```
+| Command       | What it does                                                          |
+| ------------- | -------------------------------------------------------------------- |
+| `make`        | build the emulator → `target/release/risc`                           |
+| `make tools`  | build the host tools (`ob2unix`, `asciidecoder`, `build-image`)       |
+| `make test`   | run the whole-workspace test suite                                    |
+| `make bench`  | run the render hot-path microbenchmark                                |
+| `make clean`  | `cargo clean`                                                         |
 
-- **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
-  the left `Alt` key acts as the middle button. Hotkeys: `F12` /
-  `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
-- We bundle one image; the original `oberon-risc-emu` repo has other dated
-  versions in [its `DiskImage/` directory](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+`make oberon DISK=other.dsk` boots a different image; the upstream repo has
+[other dated versions](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+
+## Controls
+
+Oberon expects a US keyboard layout and a three-button mouse; the left `Alt` key
+acts as the middle button. Hotkeys: `F12` / `Ctrl+Shift+Delete` reset · `F11` /
+`Alt+Enter` fullscreen · `Alt+F4` quit.
 
 ## Command line options
 
-`cargo run --release -- [OPTIONS] DISK-IMAGE` (or `target/release/risc [OPTIONS] DISK-IMAGE`):
+`./target/release/risc [OPTIONS] DISK-IMAGE`:
 
 - `--fullscreen` — start in fullscreen.
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
 
-`cargo run --release -- --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
+`./target/release/risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
 
 ## Transferring files
 
@@ -83,21 +87,22 @@ The [`oberon-tools`](crates/oberon-tools) crate bundles command-line tools for
 working with Oberon on the host. `ob2unix` and `asciidecoder` are pure-`std` file
 converters (ported from `oberon-risc-emu`'s `tools/`); `build-image` runs a
 headless Oberon on the `risc-core` CPU (a port of
-[`project-norebo`](https://github.com/pdewacht/project-norebo)).
+[`project-norebo`](https://github.com/pdewacht/project-norebo)). Build them with
+`make tools`; the examples below run them straight from `target/release/`.
 
 - **`ob2unix`** — dump the plain-text content of an Oberon text: drops the binary
   header and converts CR line endings to LF (a non-Oberon file passes through). It
   takes the file to convert as an argument:
 
   ```sh
-  cargo run -p oberon-tools --bin ob2unix -- Input.Mod > input.txt
+  ./target/release/ob2unix Input.Mod > input.txt
   ```
 
 - **`asciidecoder`** — extract the files from an `AsciiCoder.DecodeFiles` archive;
   `-v` lists each extracted name, `-C DIR` sets the output directory:
 
   ```sh
-  cargo run -p oberon-tools --bin asciidecoder -- -v -C outdir archive.txt
+  ./target/release/asciidecoder -v -C outdir archive.txt
   ```
 
 - **`build-image`** — compile Project Oberon from a source tree and assemble a
@@ -105,7 +110,7 @@ headless Oberon on the `risc-core` CPU (a port of
   separately first, e.g. with project-norebo's `fetch-sources.py`:
 
   ```sh
-  cargo run -p oberon-tools --release --bin build-image -- path/to/sources out.dsk
+  ./target/release/build-image path/to/sources out.dsk
   ```
 
 ## Known issues
@@ -155,7 +160,7 @@ CI smoke checks and for regenerating golden hashes:
 
 ```sh
 # run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes
-cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
+./target/release/risc headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
 ```
 
 - `--frames N` — how many 60 Hz frames to boot (default 250).

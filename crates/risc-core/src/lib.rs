@@ -21,8 +21,10 @@ pub mod disk;
 pub mod fp;
 pub mod headless;
 pub mod io;
+pub mod pclink;
+#[cfg(unix)]
+pub mod raw_serial;
 pub mod risc;
-pub mod serial;
 
 #[cfg(feature = "cosim")]
 pub mod cosim;

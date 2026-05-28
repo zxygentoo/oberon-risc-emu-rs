@@ -15,14 +15,15 @@ use winit::window::{Fullscreen, Window, WindowId};
 use risc_core::clipboard::ClipboardBridge;
 use risc_core::disk::Disk;
 use risc_core::io::Led;
+use risc_core::pclink::PcLink;
 use risc_core::risc::Risc;
-use risc_core::serial::pclink::PcLink;
+
+use oberon_risc_emu::render::{self, BLACK, WHITE};
 
 use crate::cli;
 use crate::clipboard::ArboardClipboard;
 use crate::error::Result;
 use crate::input;
-use crate::render::{self, BLACK, WHITE};
 
 const CPU_HZ: u32 = 25_000_000;
 const FPS: u32 = 60;
@@ -70,10 +71,8 @@ pub fn run() -> Result<()> {
             use std::path::Path;
             let in_path = cfg.serial_in.as_deref().unwrap_or("/dev/null");
             let out_path = cfg.serial_out.as_deref().unwrap_or("/dev/null");
-            let serial = risc_core::serial::raw_serial::RawSerial::new(
-                Path::new(in_path),
-                Path::new(out_path),
-            )?;
+            let serial =
+                risc_core::raw_serial::RawSerial::new(Path::new(in_path), Path::new(out_path))?;
             risc.set_serial(Box::new(serial));
         }
         #[cfg(not(unix))]

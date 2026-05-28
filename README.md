@@ -34,7 +34,7 @@ A `Makefile` wraps Cargo for the common workflows:
 | Command       | What it does                                                          |
 | ------------- | -------------------------------------------------------------------- |
 | `make`        | build the emulator → `target/release/risc`                           |
-| `make tools`  | build the host tools (`ob2unix`, `asciidecoder`, `build-image`)       |
+| `make tools`  | build the host CLI tools → `target/release/`                         |
 | `make test`   | run the whole-workspace test suite                                    |
 | `make bench`  | run the render hot-path microbenchmark                                |
 | `make clean`  | `cargo clean`                                                         |
@@ -85,10 +85,10 @@ clipboard (via [`arboard`](https://crates.io/crates/arboard)). Middle-click:
 
 The [`oberon-tools`](crates/oberon-tools) crate bundles command-line tools for
 working with Oberon on the host. `ob2unix` and `asciidecoder` are pure-`std` file
-converters (ported from `oberon-risc-emu`'s `tools/`); `build-image` runs a
-headless Oberon on the `risc-core` CPU (a port of
-[`project-norebo`](https://github.com/pdewacht/project-norebo)). Build them with
-`make tools`; the examples below run them straight from `target/release/`.
+converters (ported from `oberon-risc-emu`'s `tools/`) and `extract-source` reads a
+disk image directly; `build-image` runs a headless Oberon on the `risc-core` CPU
+(a port of [`project-norebo`](https://github.com/pdewacht/project-norebo)). Build
+them with `make tools`; the examples below run them straight from `target/release/`.
 
 - **`ob2unix`** — dump the plain-text content of an Oberon text: drops the binary
   header and converts CR line endings to LF (a non-Oberon file passes through). It
@@ -111,6 +111,15 @@ headless Oberon on the `risc-core` CPU (a port of
 
   ```sh
   ./target/release/build-image path/to/sources out.dsk
+  ```
+
+- **`extract-source`** — the inverse of `build-image`: extract the source files
+  from a disk image into a host directory (reads the Oberon filesystem directly;
+  no boot). Drops compiled `.rsc`/`.smb`, so the result feeds straight back into
+  `build-image`:
+
+  ```sh
+  ./target/release/extract-source Oberon.dsk out/
   ```
 
 ## Known issues

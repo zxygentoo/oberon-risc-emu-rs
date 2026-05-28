@@ -1,15 +1,16 @@
 # oberon-tools
 
-Host-side command-line tools for working with Project Oberon: two pure-`std`
-file converters and a Project Oberon disk-image builder. The binaries are
-auto-discovered from [`src/bin/`](src/bin); all three use
+Host-side command-line tools for working with Project Oberon: three pure-`std`
+file/image utilities and a Project Oberon disk-image builder. The binaries are
+auto-discovered from [`src/bin/`](src/bin); all four use
 [`clap`](https://crates.io/crates/clap) for a proper `--help`.
 
-| Binary         | What it does                                                            | Deps        |
-| -------------- | ----------------------------------------------------------------------- | ----------- |
-| `ob2unix`      | dump the plain-text content of an Oberon text                           | pure `std`  |
-| `asciidecoder` | unpack an `AsciiCoder.DecodeFiles` archive                              | pure `std`  |
-| `build-image`  | compile Project Oberon from sources and assemble a runnable disk image  | `risc-core` |
+| Binary           | What it does                                                            | Deps        |
+| ---------------- | ----------------------------------------------------------------------- | ----------- |
+| `ob2unix`        | dump the plain-text content of an Oberon text                           | pure `std`  |
+| `asciidecoder`   | unpack an `AsciiCoder.DecodeFiles` archive                              | pure `std`  |
+| `build-image`    | compile Project Oberon from sources and assemble a runnable disk image  | `risc-core` |
+| `extract-source` | extract a build-ready source tree from a disk image (drops .rsc/.smb)   | pure `std`  |
 
 ## ob2unix
 
@@ -49,6 +50,22 @@ Internally the headless runtime is one function — [`shim::run`](src/bin/build-
 which executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion against
 the host filesystem and returns its guest exit code; `build-image` drives it
 repeatedly to compile the system and lay down the disk.
+
+## extract-source
+
+Extracts the source files from a Project Oberon `.dsk` image into a host
+directory — the inverse of `build-image`. It drops the compiled artifacts
+(`.rsc`/`.smb`, which `build-image` regenerates from source), so the output is a
+build-ready tree. It reads the Oberon on-disk filesystem directly (see
+[`dsk.rs`](src/bin/extract-source/dsk.rs)), so it needs no emulator and no boot:
+
+```sh
+cargo run -p oberon-tools --bin extract-source -- Oberon.dsk out/
+cargo run -p oberon-tools --release --bin build-image -- out rebuilt.dsk   # round-trips
+```
+
+Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
+"Oberon Text", so pipe them through `ob2unix` to read them as plain text.
 
 ## Tests
 

@@ -1,7 +1,7 @@
 //! End-to-end tests for the `ob2unix`, `asciidecoder`, and `build-image` binaries.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use risc_core::disk::Disk;
@@ -10,6 +10,7 @@ use risc_core::risc::Risc;
 
 const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
 const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
+const EXTRACT_SOURCE: &str = env!("CARGO_BIN_EXE_extract-source");
 
 /// Run `bin` with `args`, feed `input` on stdin, and capture its output.
 fn run(bin: &str, args: &[&str], input: &[u8]) -> Output {
@@ -211,6 +212,58 @@ fn build_image_reproduces_the_boot_golden() {
     headless::run_frames(&mut risc, 250);
     assert_eq!(headless::framebuffer_hash(&risc), 0xb9bd_bf56_ba51_298d);
     assert_eq!(headless::state_hash(&risc), 0x7531_e881_9ea3_aac1);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The committed golden disk image (repo `DiskImage/`), resolved relative to this
+/// crate. `extract-source` reads it directly (no boot), so this is cheap and
+/// hermetic. Returns `None` (and the test skips) if the image isn't present.
+fn golden_image() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../DiskImage/Oberon-2020-08-18.dsk");
+    p.exists().then_some(p)
+}
+
+#[test]
+fn extract_source_yields_a_build_ready_tree() {
+    let Some(img) = golden_image() else {
+        eprintln!("golden image not present; skipping extract-source test");
+        return;
+    };
+    // `scratch_dir` clears any stale run; `extract-source` creates the directory.
+    let dir = scratch_dir("extract-source");
+    let out = run(
+        EXTRACT_SOURCE,
+        &[img.to_str().unwrap(), dir.to_str().unwrap()],
+        b"",
+    );
+    assert!(
+        out.status.success(),
+        "extract-source failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The compiled artifacts are dropped (38 .rsc + 38 .smb), leaving 60 sources.
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names.len(), 60, "expected 60 source files");
+    assert!(
+        !names.iter().any(|n| matches!(
+            Path::new(n).extension().and_then(|e| e.to_str()),
+            Some("rsc" | "smb")
+        )),
+        "compiled artifacts were not skipped"
+    );
+
+    // A known module came out byte-complete and as readable source.
+    let kernel = std::fs::read(dir.join("Kernel.Mod")).expect("Kernel.Mod extracted");
+    assert_eq!(kernel.len(), 9986, "unexpected Kernel.Mod size");
+    assert!(
+        kernel.starts_with(b"MODULE Kernel;"),
+        "Kernel.Mod is not the expected source"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

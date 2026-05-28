@@ -15,7 +15,9 @@ use std::process::exit;
 use std::{fs, io};
 
 use clap::Parser;
-use oberon_tools::run_norebo;
+
+mod norebo;
+use norebo::run_norebo;
 
 /// Modules compiled to seed the host toolchain, then linked into a fresh inner
 /// core (project-norebo's `build_norebo` set). The host versions of
@@ -93,86 +95,104 @@ const PO2013_MODULES: &[&str] = &[
 const TOOLCHAIN: &[(&str, &[u8])] = &[
     (
         "Norebo.Mod",
-        include_bytes!("../../assets/Norebo/Norebo.Mod"),
+        include_bytes!("../../../assets/Norebo/Norebo.Mod"),
     ),
     (
         "Kernel.Mod",
-        include_bytes!("../../assets/Norebo/Kernel.Mod"),
+        include_bytes!("../../../assets/Norebo/Kernel.Mod"),
     ),
     (
         "FileDir.Mod",
-        include_bytes!("../../assets/Norebo/FileDir.Mod"),
+        include_bytes!("../../../assets/Norebo/FileDir.Mod"),
     ),
-    ("Files.Mod", include_bytes!("../../assets/Norebo/Files.Mod")),
+    (
+        "Files.Mod",
+        include_bytes!("../../../assets/Norebo/Files.Mod"),
+    ),
     (
         "Oberon.Mod",
-        include_bytes!("../../assets/Norebo/Oberon.Mod"),
+        include_bytes!("../../../assets/Norebo/Oberon.Mod"),
     ),
     (
         "CoreLinker.Mod",
-        include_bytes!("../../assets/Norebo/CoreLinker.Mod"),
+        include_bytes!("../../../assets/Norebo/CoreLinker.Mod"),
     ),
-    ("VDisk.Mod", include_bytes!("../../assets/Norebo/VDisk.Mod")),
+    (
+        "VDisk.Mod",
+        include_bytes!("../../../assets/Norebo/VDisk.Mod"),
+    ),
     (
         "VFileDir.Mod",
-        include_bytes!("../../assets/Norebo/VFileDir.Mod"),
+        include_bytes!("../../../assets/Norebo/VFileDir.Mod"),
     ),
     (
         "VFiles.Mod",
-        include_bytes!("../../assets/Norebo/VFiles.Mod"),
+        include_bytes!("../../../assets/Norebo/VFiles.Mod"),
     ),
     (
         "VDiskUtil.Mod",
-        include_bytes!("../../assets/Norebo/VDiskUtil.Mod"),
+        include_bytes!("../../../assets/Norebo/VDiskUtil.Mod"),
     ),
     (
         "InnerCore",
-        include_bytes!("../../assets/Bootstrap/InnerCore"),
+        include_bytes!("../../../assets/Bootstrap/InnerCore"),
     ),
     (
         "Kernel.rsc",
-        include_bytes!("../../assets/Bootstrap/Kernel.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Kernel.rsc"),
     ),
     (
         "FileDir.rsc",
-        include_bytes!("../../assets/Bootstrap/FileDir.rsc"),
+        include_bytes!("../../../assets/Bootstrap/FileDir.rsc"),
     ),
     (
         "Files.rsc",
-        include_bytes!("../../assets/Bootstrap/Files.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Files.rsc"),
     ),
     (
         "Modules.rsc",
-        include_bytes!("../../assets/Bootstrap/Modules.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Modules.rsc"),
     ),
     (
         "Norebo.rsc",
-        include_bytes!("../../assets/Bootstrap/Norebo.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Norebo.rsc"),
     ),
     (
         "Oberon.rsc",
-        include_bytes!("../../assets/Bootstrap/Oberon.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Oberon.rsc"),
     ),
     (
         "CoreLinker.rsc",
-        include_bytes!("../../assets/Bootstrap/CoreLinker.rsc"),
+        include_bytes!("../../../assets/Bootstrap/CoreLinker.rsc"),
     ),
     (
         "Fonts.rsc",
-        include_bytes!("../../assets/Bootstrap/Fonts.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Fonts.rsc"),
     ),
     (
         "Texts.rsc",
-        include_bytes!("../../assets/Bootstrap/Texts.rsc"),
+        include_bytes!("../../../assets/Bootstrap/Texts.rsc"),
     ),
     (
         "RS232.rsc",
-        include_bytes!("../../assets/Bootstrap/RS232.rsc"),
+        include_bytes!("../../../assets/Bootstrap/RS232.rsc"),
     ),
-    ("ORS.rsc", include_bytes!("../../assets/Bootstrap/ORS.rsc")),
-    ("ORB.rsc", include_bytes!("../../assets/Bootstrap/ORB.rsc")),
-    ("ORG.rsc", include_bytes!("../../assets/Bootstrap/ORG.rsc")),
-    ("ORP.rsc", include_bytes!("../../assets/Bootstrap/ORP.rsc")),
+    (
+        "ORS.rsc",
+        include_bytes!("../../../assets/Bootstrap/ORS.rsc"),
+    ),
+    (
+        "ORB.rsc",
+        include_bytes!("../../../assets/Bootstrap/ORB.rsc"),
+    ),
+    (
+        "ORG.rsc",
+        include_bytes!("../../../assets/Bootstrap/ORG.rsc"),
+    ),
+    (
+        "ORP.rsc",
+        include_bytes!("../../../assets/Bootstrap/ORP.rsc"),
+    ),
 ];
 
 /// Build a runnable Project Oberon disk image from a source tree.

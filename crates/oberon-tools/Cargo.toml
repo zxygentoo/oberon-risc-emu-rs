@@ -10,12 +10,12 @@ description = "Host-side Oberon tools: text/archive converters and a Project Obe
 #   asciidecoder  - unpack an 'AsciiCoder.DecodeFiles' archive
 #   build-image   - compile Project Oberon and assemble a runnable disk image
 # ob2unix/asciidecoder are pure std; build-image uses the headless "Norebo"
-# runtime in src/lib.rs (a Rust port of project-norebo) on the risc-core CPU.
+# runtime in src/bin/build-image/norebo.rs (a Rust port of project-norebo) on the risc-core CPU.
 
 [dependencies]
 # CLI parsing for all three tools (clap 4 derive is already used by the `risc` frontend).
 clap = { version = "4", features = ["derive"] }
-# Used only by build-image (via src/lib.rs); the file converters don't.
+# Used only by build-image (via its norebo module); the file converters don't.
 risc-core = { path = "../risc-core" }
 
 [lints]

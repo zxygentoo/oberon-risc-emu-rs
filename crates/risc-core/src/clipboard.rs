@@ -1,5 +1,6 @@
 //! The clipboard GET/PUT state machine bridging the host clipboard to Oberon
-//! (port of `sdl-clipboard.c`).
+//! (ports the state machine from `sdl-clipboard.c`; that file's SDL host access
+//! is split out into the frontend's `arboard` backend behind [`HostClipboard`]).
 //!
 //! Oberon uses bare `CR` line endings; the host uses `LF` (or `CRLF`). On GET
 //! (host -> Oberon) `CRLF`/`LF` are folded to `CR`; on PUT (Oberon -> host) `CR`

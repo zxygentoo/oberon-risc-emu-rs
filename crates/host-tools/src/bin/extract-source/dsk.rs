@@ -15,6 +15,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use host_tools::name_char_ok;
+
 // Constants from `FileDir.Mod`.
 const SECTOR_SIZE: usize = 1024;
 const FN_LENGTH: usize = 32;
@@ -198,8 +200,7 @@ fn read_name(field: &[u8]) -> Option<String> {
         if ch == 0 {
             break;
         }
-        let ok = ch.is_ascii_alphabetic() || (i > 0 && (ch == b'.' || ch.is_ascii_digit()));
-        if !ok {
+        if !name_char_ok(i, ch) {
             return None;
         }
         s.push(char::from(ch));

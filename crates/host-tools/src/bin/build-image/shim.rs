@@ -11,6 +11,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use host_tools::name_char_ok;
 use risc_core::io::{ShimHost, ShimMem};
 use risc_core::risc::Risc;
 
@@ -422,8 +423,7 @@ fn read_name(mem: &ShimMem, adr: u32) -> Option<String> {
         if ch == 0 {
             return Some(s);
         }
-        let ok = ch.is_ascii_alphabetic() || (i > 0 && (ch == b'.' || ch.is_ascii_digit()));
-        if !ok {
+        if !name_char_ok(i, ch) {
             return None;
         }
         s.push(char::from(ch));
@@ -438,8 +438,7 @@ fn valid_name(bytes: &[u8]) -> bool {
         return false;
     }
     for (i, &ch) in bytes.iter().enumerate() {
-        let ok = ch.is_ascii_alphabetic() || (i > 0 && (ch == b'.' || ch.is_ascii_digit()));
-        if !ok {
+        if !name_char_ok(i, ch) {
             return false;
         }
     }

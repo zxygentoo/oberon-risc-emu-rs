@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/risc-core", "crates/oberon-tools"]
+members = ["crates/risc-core", "crates/host-tools"]
 
 # Shared lint policy, inherited by both crates via `[lints] workspace = true`.
 # Warnings are treated as errors in CI via `cargo clippy --workspace

@@ -18,7 +18,7 @@ oberon:
 
 # Host tools -> target/release/{ob2unix,asciidecoder,build-image,extract-source}
 tools:
-	$(CARGO) build --release -p oberon-tools
+	$(CARGO) build --release -p host-tools
 	@echo
 	@echo "  ✓ tools built → target/release/"
 	@echo "      ob2unix  asciidecoder  build-image  extract-source"

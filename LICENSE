@@ -20,5 +20,5 @@ This project is a Rust port of the Oberon RISC Emulator (oberon-risc-emu),
 Copyright (c) 2014 Peter De Wachter, used under the ISC license.
 
 Bundled Project Oberon 2013 material — the disk image under DiskImage/ and the
-toolchain assets under crates/oberon-tools/assets/ — is the work of its respective
-authors under the same ISC terms; see crates/oberon-tools/assets/README.md.
+toolchain assets under crates/host-tools/assets/ — is the work of its respective
+authors under the same ISC terms; see crates/host-tools/assets/README.md.

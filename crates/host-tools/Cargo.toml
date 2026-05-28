@@ -1,5 +1,5 @@
 [package]
-name = "oberon-tools"
+name = "host-tools"
 version = "0.1.0"
 edition = "2021"
 license = "ISC"
@@ -12,6 +12,9 @@ description = "Host-side Oberon tools: text/archive converters and a Project Obe
 #   extract-source - extract the source files from a Project Oberon disk image
 # All are pure std except build-image, which uses the headless "shim" runtime in
 # src/bin/build-image/shim.rs (a Rust port of project-norebo) on the risc-core CPU.
+#
+# src/lib.rs holds the handful of Oberon rules the binaries must agree on (the
+# file-name character set today), so the per-binary copies can't drift.
 
 [dependencies]
 # CLI parsing for all four tools (clap 4 derive is already used by the `risc` frontend).

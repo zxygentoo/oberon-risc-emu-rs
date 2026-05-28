@@ -1,4 +1,4 @@
-# oberon-tools
+# host-tools
 
 Host-side command-line tools for working with Project Oberon: three pure-`std`
 file/image utilities and a Project Oberon disk-image builder. The binaries are
@@ -19,7 +19,7 @@ that isn't an Oberon text passes through unchanged). Takes the file to convert a
 an argument and writes to stdout:
 
 ```sh
-cargo run -p oberon-tools --bin ob2unix -- Input.Mod > input.txt
+cargo run -p host-tools --bin ob2unix -- Input.Mod > input.txt
 ```
 
 ## asciidecoder
@@ -28,7 +28,7 @@ Extracts the member files from an `AsciiCoder.DecodeFiles` archive. `-v` lists
 each extracted name; `-C DIR` sets the output directory:
 
 ```sh
-cargo run -p oberon-tools --bin asciidecoder -- -v -C outdir archive.txt
+cargo run -p host-tools --bin asciidecoder -- -v -C outdir archive.txt
 ```
 
 ## build-image
@@ -43,7 +43,7 @@ bootstrap objects that seed the first compile are embedded in the binary (see
 ```sh
 # 1. fetch a PO2013 source tree (e.g. with project-norebo's fetch-sources.py)
 # 2. build the image (release — compiling Oberon is CPU-heavy):
-cargo run -p oberon-tools --release --bin build-image -- path/to/sources out.dsk
+cargo run -p host-tools --release --bin build-image -- path/to/sources out.dsk
 ```
 
 Internally the headless runtime is one function — [`shim::run`](src/bin/build-image/shim.rs) —
@@ -60,8 +60,8 @@ build-ready tree. It reads the Oberon on-disk filesystem directly (see
 [`dsk.rs`](src/bin/extract-source/dsk.rs)), so it needs no emulator and no boot:
 
 ```sh
-cargo run -p oberon-tools --bin extract-source -- Oberon.dsk out/
-cargo run -p oberon-tools --release --bin build-image -- out rebuilt.dsk   # round-trips
+cargo run -p host-tools --bin extract-source -- Oberon.dsk out/
+cargo run -p host-tools --release --bin build-image -- out rebuilt.dsk   # round-trips
 ```
 
 Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
@@ -70,7 +70,7 @@ Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
 ## Tests
 
 ```sh
-cargo test -p oberon-tools
+cargo test -p host-tools
 ```
 
 Unit tests cover the converters' pure functions and `build-image`'s filesystem
@@ -82,7 +82,7 @@ gated on `OBERON_SOURCES` (a fetched PO2013 tree, e.g. project-norebo's
 `upstream/`):
 
 ```sh
-OBERON_SOURCES=/path/to/po2013/sources cargo test -p oberon-tools
+OBERON_SOURCES=/path/to/po2013/sources cargo test -p host-tools
 ```
 
 ## License

@@ -153,6 +153,10 @@ MODULE Oberon; (*derived from JG 6.9.90 / 23.9.93 / 13.8.94 / NW 14.4.2013 / 22.
   BEGIN ActCnt := count
   END Collect;
 
+  PROCEDURE Return*(n: INTEGER);
+  BEGIN (*headless: the command result is reported via Norebo.Halt, not Par.res*)
+  END Return;
+
   PROCEDURE Loop*;
     VAR t: INTEGER;
   BEGIN

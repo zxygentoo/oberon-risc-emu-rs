@@ -403,7 +403,16 @@ impl Risc {
     /// Run in shim mode until the host halts (syscall 1 / a trap) and return its
     /// process-style exit code. Requires [`Self::set_shim`] + [`Self::boot_inner_core`].
     /// Guarded by a large instruction budget so a runaway image can't hang forever.
+    ///
+    /// Set `OBERON_TRACE` in the environment to dump the total instruction count,
+    /// a ring of the last instructions, and the registers when the run ends by
+    /// leaving RAM or exhausting the budget — the inner-core bring-up aid for
+    /// mapping a bad branch back to a module via the core layout.
     pub fn shim_run(&mut self) -> i32 {
+        const RING: usize = 256;
+        let trace = std::env::var_os("OBERON_TRACE").is_some();
+        let mut ring = [(0u32, 0u32); RING];
+        let (mut ri, mut steps): (usize, u64) = (0, 0);
         let mut budget: u64 = 64_000_000_000;
         loop {
             if let Some(code) = self.shim.as_ref().and_then(|h| h.exit_code()) {
@@ -411,15 +420,56 @@ impl Risc {
             }
             if self.pc >= self.mem_size / 4 {
                 eprintln!("shim: PC left RAM (0x{:08X})", self.pc.wrapping_mul(4));
+                if trace {
+                    self.dump_trace(&ring, ri, steps);
+                }
                 return 1;
             }
             if budget == 0 {
                 eprintln!("shim: instruction budget exhausted");
+                if trace {
+                    self.dump_trace(&ring, ri, steps);
+                }
                 return 1;
             }
             budget -= 1;
+            if trace {
+                let ir = self.ram[self.pc as usize];
+                ring[ri] = (self.pc.wrapping_mul(4), ir);
+                ri = (ri + 1) % RING;
+                steps += 1;
+                // A bare 0 word is never emitted into a live instruction stream, so
+                // executing one means we fell into zeroed memory off a wild branch.
+                // Dump here: the ring still holds the branch that sent us there.
+                if ir == 0 {
+                    eprintln!(
+                        "shim: executed zero instruction at 0x{:08X} (wild branch target)",
+                        self.pc.wrapping_mul(4)
+                    );
+                    self.dump_trace(&ring, ri, steps);
+                    return 1;
+                }
+            }
             self.single_step();
         }
+    }
+
+    /// Dump the trace ring (oldest→newest, byte-PC + instruction word), the
+    /// register file, and the total step count to stderr. See [`Self::shim_run`].
+    fn dump_trace(&self, ring: &[(u32, u32)], next: usize, steps: u64) {
+        let n = (steps as usize).min(ring.len());
+        eprintln!("shim: {steps} instruction(s) executed; last {n} (PC: IR):");
+        for k in 0..n {
+            let (pc, ir) = ring[(next + ring.len() - n + k) % ring.len()];
+            eprintln!("  {pc:08X}: {ir:08X}");
+        }
+        for i in 0..16 {
+            eprint!("  R{i:<2}={:08X}", self.r[i as usize]);
+            if i % 4 == 3 {
+                eprintln!();
+            }
+        }
+        eprintln!("  PC ={:08X}", self.pc.wrapping_mul(4));
     }
 
     /// Run up to `cycles` instructions, stopping early when the CPU is detected

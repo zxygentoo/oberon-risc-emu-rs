@@ -406,48 +406,59 @@ fn eo_seed_boots_compiles_and_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Full `build-eo-image`: from an Extended Oberon source tree, rebuild the headless
-/// EO system and check it reproduces the committed golden inner core byte-for-byte
-/// and ships every object with its symbol file. Needs an EO source tree (the stock
-/// `Modules`/`Fonts`/`Texts`/`OR*` sources aren't vendored); point `EO_SOURCES_DIR`
-/// at one (e.g. an `extract-source` tree of an EO `RISC.img`) — skipped otherwise.
-/// Heavy (compiles the EO toolchain through the shim), so it's `#[ignore]`d.
+/// Boot `disk` headless until the desktop settles and return the framebuffer hash.
+/// `Disk::new` auto-detects the sector offset (full SD `RISC.img` vs raw `.dsk`).
+fn boot_framebuffer_hash(disk: &Path) -> u64 {
+    let mut risc = Risc::new();
+    risc.set_spi(1, Box::new(Disk::new(Some(disk)).expect("open disk")));
+    headless::run_frames(&mut risc, 1000);
+    headless::framebuffer_hash(&risc)
+}
+
+/// Full `build-eo-image` round-trip: extract an Extended Oberon image's sources,
+/// rebuild a disk, and check the rebuild boots **identically** to the original — to
+/// the same EO desktop framebuffer. Modules load by name, not by disk layout, so a
+/// faithful rebuild reaches the very same screen despite a different byte layout.
+///
+/// Needs an EO image (the AP 1.1.26 `RISC.img` is ~270 MB, not vendored): point
+/// `EO_IMAGE` at one (a full SD `RISC.img` or a `.dsk`) — skipped otherwise. Heavy
+/// (compiles the whole EO system through the shim), so it's `#[ignore]`d.
 #[test]
-#[ignore = "needs EO_SOURCES_DIR and compiles the EO toolchain via the shim; run with --ignored"]
-fn build_eo_image_reproduces_the_inner_core() {
-    let Some(src) = std::env::var_os("EO_SOURCES_DIR").map(PathBuf::from) else {
-        eprintln!("EO_SOURCES_DIR not set; skipping build-eo-image round-trip");
+#[ignore = "needs EO_IMAGE; rebuilds all of EO via the shim; run with --ignored"]
+fn build_eo_image_round_trips_a_bootable_desktop() {
+    let Some(img) = std::env::var_os("EO_IMAGE").map(PathBuf::from) else {
+        eprintln!("EO_IMAGE not set; skipping build-eo-image round-trip");
         return;
     };
 
-    let out = scratch_dir("eo-build-out");
+    let src = scratch_dir("eo-rt-src");
+    let out = run(
+        EXTRACT_SOURCE,
+        &[img.to_str().unwrap(), src.to_str().unwrap()],
+        b"",
+    );
+    assert!(
+        out.status.success(),
+        "extract-source failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let dst = scratch_dir("eo-rt-build");
+    let dsk = dst.join("Oberon.dsk");
     let status = Command::new(BUILD_EO_IMAGE)
         .arg(&src)
-        .arg(&out)
+        .arg(&dsk)
         .status()
         .expect("spawn build-eo-image");
     assert!(status.success(), "build-eo-image failed");
 
-    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/eo-Bootstrap/InnerCore");
+    let built = boot_framebuffer_hash(&dsk);
+    let original = boot_framebuffer_hash(&img);
     assert_eq!(
-        std::fs::read(out.join("InnerCore")).expect("built InnerCore"),
-        std::fs::read(&golden).expect("golden InnerCore"),
-        "rebuilt inner core does not reproduce the committed golden"
+        built, original,
+        "rebuilt disk does not boot to the same desktop as the original EO image"
     );
-    // The system ships objects with their symbol files, so downstream compiles
-    // (modules that import the system) resolve their imports.
-    for m in [
-        "Kernel",
-        "Files",
-        "Modules",
-        "Oberon",
-        "Texts",
-        "ORP",
-        "CoreLinker",
-    ] {
-        assert!(out.join(format!("{m}.rsc")).exists(), "missing {m}.rsc");
-        assert!(out.join(format!("{m}.smb")).exists(), "missing {m}.smb");
-    }
 
-    let _ = std::fs::remove_dir_all(&out);
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&dst);
 }

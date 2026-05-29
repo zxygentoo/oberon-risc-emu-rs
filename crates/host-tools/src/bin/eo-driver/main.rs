@@ -44,6 +44,15 @@ struct Cli {
     /// Dump everything EO transmitted on the serial line to this file.
     #[arg(long, value_name = "FILE")]
     serial_out: Option<PathBuf>,
+
+    /// After booting, move the pointer to screen pixel X,Y (top-left origin).
+    #[arg(long, value_name = "X,Y")]
+    move_to: Option<String>,
+
+    /// After moving, middle-click there — Oberon's "execute the command under the
+    /// pointer" gesture. Requires --move-to.
+    #[arg(long)]
+    mid_click: bool,
 }
 
 /// Bytes in flight on the serial line, shared between the driver and the device.
@@ -94,13 +103,14 @@ fn run(cli: &Cli) -> Result<(), String> {
         cli.frames / FPS
     );
 
-    // Detect when the screen stops changing: the first frame after which two
-    // consecutive samples match (any later change resets it).
+    // Boot/settle: detect when the screen stops changing (two consecutive samples
+    // match; any later change resets it).
     let (mut prev_hash, mut settled_at) = (None::<u64>, None::<u32>);
-    for frame in 0..cli.frames {
+    let mut frame = 0u32;
+    while frame < cli.frames {
         risc.set_time(frame.wrapping_mul(frame_ms));
         risc.run(cycles);
-        if cli.sample != 0 && frame % cli.sample == 0 {
+        if cli.sample != 0 && frame.is_multiple_of(cli.sample) {
             let h = framebuffer_hash(&risc);
             if prev_hash == Some(h) {
                 settled_at.get_or_insert(frame);
@@ -108,6 +118,24 @@ fn run(cli: &Cli) -> Result<(), String> {
                 prev_hash = Some(h);
                 settled_at = None;
             }
+        }
+        frame += 1;
+    }
+
+    // Optional input: move the pointer (and middle-click to execute) after boot.
+    // Oberon's y origin is bottom-left, so flip the screen y the screenshot uses.
+    if let Some(spec) = &cli.move_to {
+        let (x, y) = parse_xy(spec)?;
+        let y_oberon = (risc.fb_height() - 1) - y;
+        eprintln!("Pointer -> screen ({x},{y}) = Oberon ({x},{y_oberon})");
+        risc.mouse_moved(x, y_oberon);
+        advance(&mut risc, &mut frame, 15, frame_ms, cycles);
+        if cli.mid_click {
+            eprintln!("Middle-click (execute) at screen ({x},{y})");
+            risc.mouse_button(2, true);
+            advance(&mut risc, &mut frame, 8, frame_ms, cycles);
+            risc.mouse_button(2, false);
+            advance(&mut risc, &mut frame, 180, frame_ms, cycles);
         }
     }
 
@@ -173,4 +201,21 @@ fn write_pgm(risc: &Risc, path: &Path) -> std::io::Result<()> {
         }
     }
     std::fs::write(path, out)
+}
+
+/// Run `n` frames on the synthetic clock, advancing the shared frame counter.
+fn advance(risc: &mut Risc, frame: &mut u32, n: u32, frame_ms: u32, cycles: u32) {
+    for _ in 0..n {
+        risc.set_time(frame.wrapping_mul(frame_ms));
+        risc.run(cycles);
+        *frame += 1;
+    }
+}
+
+/// Parse an `X,Y` pair of screen pixels (top-left origin).
+fn parse_xy(s: &str) -> Result<(i32, i32), String> {
+    let (a, b) = s.split_once(',').ok_or("expected X,Y")?;
+    let x = a.trim().parse().map_err(|_| format!("bad X in {s:?}"))?;
+    let y = b.trim().parse().map_err(|_| format!("bad Y in {s:?}"))?;
+    Ok((x, y))
 }

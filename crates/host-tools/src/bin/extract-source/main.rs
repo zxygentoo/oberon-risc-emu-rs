@@ -12,6 +12,10 @@
 //! It reads the Oberon on-disk filesystem directly (see [`dsk`]); no emulator, no
 //! boot. Usage: `extract-source <DISK_IMAGE> <OUTPUT_DIR>`.
 //!
+//! By default the compiled artifacts are skipped; pass `--keep-objects` to also
+//! extract them, to harvest a compiler/toolchain *seed* from a prebuilt image
+//! (e.g. Extended Oberon's `RISC.img`).
+//!
 //! Extracted files are byte-for-byte as stored. Oberon sources (`*.Mod`,
 //! `*.Tool`, `*.Text`) are "Oberon Text", not plain UTF-8; pipe them through
 //! [`ob2unix`](../ob2unix) to read them as plain text.
@@ -53,6 +57,13 @@ struct Cli {
     /// Directory to extract the sources into (created if needed)
     #[arg(value_name = "OUTPUT_DIR")]
     output: PathBuf,
+
+    /// Also extract compiled objects (`.rsc`) and symbol files (`.smb`), which are
+    /// skipped by default. Use this to harvest a toolchain *seed* from a prebuilt
+    /// image (e.g. Extended Oberon's `RISC.img`). The result is seed material, not
+    /// a tree to feed back into build-image — kept objects would shadow a rebuild.
+    #[arg(long)]
+    keep_objects: bool,
 }
 
 fn main() {
@@ -85,9 +96,9 @@ fn run(cli: &Cli) -> io::Result<()> {
         .collect();
 
     let mut packonly = BTreeSet::new();
-    let (mut extracted, mut skipped) = (0usize, 0usize);
+    let (mut extracted, mut skipped, mut objects) = (0usize, 0usize, 0usize);
     for e in &entries {
-        if is_compiled(&e.name) {
+        if is_compiled(&e.name) && !cli.keep_objects {
             skipped += 1;
             continue;
         }
@@ -100,8 +111,12 @@ fn run(cli: &Cli) -> io::Result<()> {
                 write_file(&cli.output, &e.name, &data)?;
                 extracted += 1;
                 // Record pack-only only once the file is actually written, so the
-                // manifest never names a file we failed to extract.
-                if !is_module_source {
+                // manifest never names a file we failed to extract. Compiled objects
+                // (present only with --keep-objects) are seed material, not pack-only
+                // data, so they stay off the manifest.
+                if is_compiled(&e.name) {
+                    objects += 1;
+                } else if !is_module_source {
                     packonly.insert(e.name.clone());
                 }
             }
@@ -117,8 +132,13 @@ fn run(cli: &Cli) -> io::Result<()> {
         host_tools::packonly::render(&packonly),
     )?;
 
+    let tail = if cli.keep_objects {
+        format!("kept {objects} .rsc/.smb objects")
+    } else {
+        format!("skipped {skipped} compiled .rsc/.smb")
+    };
     println!(
-        "extracted {extracted} source files to {} ({} pack-only; skipped {skipped} compiled .rsc/.smb)",
+        "extracted {extracted} files to {} ({} pack-only; {tail})",
         cli.output.display(),
         packonly.len(),
     );

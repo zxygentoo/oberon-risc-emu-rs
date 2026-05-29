@@ -33,11 +33,15 @@ Now working, all via `eo-shim` / `host_tools::shim`:
   the live-EO link (the golden round-trip property);
 - a freshly compiled command runs and its output reaches the host.
 
-`build-eo-image <sources> <out>` does the whole pipeline (compile the EO toolchain in
-the shim → link a fresh `InnerCore` → emit the system), and reproduces the committed
-golden inner core byte-for-byte. **Remaining:** a GUI-bootable `.dsk` (EO writes its
-boot file to disk *sectors* via `ORL`/`Disk`, which the headless glue stubs out — see
-"What's next").
+**`build-eo-image <sources> <out.dsk>` is complete** — the EO peer of `build-image`.
+From an Extended Oberon source tree it compiles the EO toolchain in the shim, links a
+fresh inner core, compiles the *whole* EO system, and assembles a **bootable
+`Oberon.dsk`**. The result boots to the full EO desktop in the emulator, byte-for-byte
+identical to the original image's boot (`risc Oberon.dsk` for the GUI; the round-trip
+test boots both headless and compares framebuffer hashes). The pipeline is now shared
+with `build-image` (same `NOREBO_MODULES`, `.rsx` rename, `CoreLinker.LinkDisk` +
+`VDiskUtil.InstallFiles`); the only EO specifics are the embedded glue seed and the
+`Modules`-top inner core.
 
 ---
 
@@ -48,7 +52,8 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
 `eo-driver --push` · `EO Oberon stub` · `Oberon.Return (full toolchain compiles)` ·
 `CoreLinker port (compiles)` · `CoreLinker reads .rsc + links clean InnerCore` ·
 `shim→lib + eo-shim harness` · `shim PC-trace (OBERON_TRACE)` ·
-`build-eo-image + EO bootstrap seed (boot solved: Modules-top)`.
+`build-eo-image + EO bootstrap seed (boot solved: Modules-top)` ·
+`build-eo-image → bootable Oberon.dsk (.rsx CoreLinker, shared resolve, round-trip)`.
 
 - **`extract-source`** (`src/bin/extract-source/`): `dsk.rs` auto-detects the FS
   offset (raw `.dsk` at 0, full SD `RISC.img` at `0x10000400` = `0x80002` blocks).
@@ -76,21 +81,22 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
   `InnerCore` (23 KB) + the 14 glue-compiled toolchain `.rsc` (`Kernel`…`ORP`,
   `CoreLinker`). `build-eo-image` embeds these; `InnerCore` is the golden image the
   round-trip checks against.
-- **`build-eo-image`** (`src/bin/build-eo-image/`): `build-eo-image <sources> <out>`
-  — the EO counterpart of `build-image`. Embeds the seed, compiles the EO toolchain
-  (glue + stock EO + `OR*` + `CoreLinker`) through the shim, links a fresh
-  `Modules`-topped `InnerCore`, and writes the system (`InnerCore` + `.rsc`/`.smb`) to
-  `out`. Verifies the link reproduces the golden core. (No GUI-bootable `.dsk` yet —
-  see "What's next".)
+- **`build-eo-image`** (`src/bin/build-eo-image/`): `build-eo-image <sources> <out.dsk>`
+  — the EO counterpart of `build-image`. Embeds the seed (glue + `VDisk` family), then
+  mirrors `build-image`: compile the toolchain → link a fresh `Modules`-topped inner
+  core → compile the *whole* EO source tree → `CoreLinker.LinkDisk` the boot core →
+  `VDiskUtil.InstallFiles`, producing a **bootable `Oberon.dsk`**. The shared pipeline
+  lives in `host_tools::resolve` (compile-order) + the per-binary `build()`.
 - **`risc-core` PC-trace** (`src/risc.rs` `shim_run`): set `OBERON_TRACE=1` to dump
   the instruction count, a ring of the last instructions, and the registers when a run
   leaves RAM / exhausts its budget — plus a trip-wire on executing a zero word (a wild
   branch into zeroed memory). Zero-cost when unset.
 
-The PO2013 `build-image` + its golden round-trip test (`#[ignore]`) are untouched
-and green. EO tests: `eo_seed_boots_compiles_and_runs` (hermetic — the committed seed
-boots, compiles `Tiny`, runs it) and `build_eo_image_reproduces_the_inner_core`
-(`#[ignore]`, needs `EO_SOURCES_DIR`).
+The PO2013 `build-image` + its golden round-trip test (`#[ignore]`) are untouched and
+green (the `resolve` move is import-only). EO tests: `eo_seed_boots_compiles_and_runs`
+(hermetic — the committed seed boots, compiles `Tiny`, runs it) and
+`build_eo_image_round_trips_a_bootable_desktop` (`#[ignore]`, needs `EO_IMAGE`: extract
+→ rebuild → boot, asserting the rebuilt disk's framebuffer equals the original's).
 
 ---
 
@@ -105,7 +111,9 @@ PO2013, all handled:
 - **4** fixup origins `P/D/T/**M**` (method-table fixup is EO-new), EO's instruction
   encoding (`MOV/BLT`, `U/B`, `C4..C26`), EO's **absolute** global addressing
   (2-word `MOV`), not PO2013 MT-indirection.
-- `ThisFile` reads **`.rsc`** (in-system objects aren't renamed `.rsx`).
+- `ThisFile` reads **`.rsx`** (the offline-link convention: the build renames the
+  freshly compiled objects `.rsc`->`.rsx` around each link, so they don't collide with
+  the live `.rsc` the shim loads to *run* the linker — same as the PO2013 `CoreLinker`).
 - boot setup: `buffer[0] := BCT + body DIV 4 - 1` (branch to top body),
   `buffer[4/5/6]` = AllocPtr/topaddr/0x40000, `buffer[MTOrg DIV 4 + num] := addr`
   (MTOrg=20H). **Validated:** `buffer[6]` (0x40000) is moot — `boot_inner_core`
@@ -115,7 +123,9 @@ PO2013, all handled:
 The fixups were **correct from the start**. The boot failure was the *top module*,
 not the linker: `CoreLinker.LinkSerial Modules InnerCore` → `Linking InnerCore 23148`
 → a 23 KB core that boots. Re-linking that same core *inside the shim* with the glue
-`CoreLinker` produces a **byte-identical** image (the golden round-trip).
+`CoreLinker` produces a **byte-identical** image (the golden round-trip). The same
+`CoreLinker.LinkDisk` writes the boot core onto the output `Oberon.dsk` in
+`build-eo-image`, which then boots the full EO desktop.
 
 ---
 
@@ -143,22 +153,27 @@ the `Oberon`-top core ran ~1M instructions of confused execution (SP clobbered t
 boots, dispatches, and exits cleanly (0 success, 3 `badkey`, 6 `nocmd` — all real
 `Modules.res` codes).
 
-## What's next (the `.dsk` step)
+## DONE: the bootable disk (`build-eo-image`)
 
-The headless system is done. The remaining piece is a **GUI-bootable `RISC.img`/`.dsk`**.
-EO does *not* use PO2013's `VDisk`/`VDiskUtil`; it writes the boot file to the disk's
-boot area (sectors 2–159) with **`ORL.Link`** (→ `Modules.bin`) + **`ORL.Load`**, both
-of which go through `Disk.Get/PutSector` — which the headless glue `Disk` aborts. So
-the `.dsk` step needs one of:
-- a **disk-sector backend** in the Rust shim (host file presented as sectors) plus a
-  glue `Disk` that routes sectors to it, then run EO's native `ORL.Link`/`ORL.Load`; or
-- a **`VDisk`-style port** to EO (build the filesystem + boot blocks into a host file
-  from Oberon), mirroring PO2013 `build-image`'s `CoreLinker.LinkDisk` + `VDiskUtil`.
-  (The on-disk FS format is shared — `FileDir.Mod`/`Files.Mod` are unchanged between
-  PO2013 and EO — so the FS half likely ports cleanly; the boot-area format is the open
-  question.)
+The GUI-bootable `.dsk` is built exactly like `build-image`'s, not via EO's
+`ORL`/`Disk`-sector path: the boot core is written with **`CoreLinker.LinkDisk`** and
+the filesystem with **`VDiskUtil.InstallFiles`**, both running in the shim on a host
+file. This works for EO because the on-disk FS format is shared (`FileDir.Mod`/
+`Files.Mod` are unchanged from PO2013), so the `VDisk` family compiles against the EO
+glue **unchanged** and produces an EO-readable disk; and the inner core boots via the
+same `Modules`-top mechanism whether the ROM loads it from disk or the shim sets `PC=0`
+(the ROM PROM is shared RISC5 hardware). So `build-eo-image` is structurally identical
+to `build-image` — the realisation that closed the gap.
 
-The bring-up aid for that work is the same `OBERON_TRACE` PC-trace used above.
+Round-trip, validated: extract a pristine EO image's sources → `build-eo-image` → the
+rebuilt `Oberon.dsk` boots to the **same** EO desktop as the original, framebuffer
+hash `0x1bed5d10ac9ec259` for both (AP 1.1.26). The boot core needs the real EO `Disk`
+(real `Files` imports it), which links + runs on the emulator's real (emulated) disk —
+no host stub involved at GUI-boot time.
+
+Possible follow-ups (not needed for the round-trip): EO's *native* `ORL.Link`/`ORL.Load`
+path (would need a shim disk-sector backend) for parity with how EO builds itself; and
+a way to size/trim the output image.
 
 ---
 
@@ -168,22 +183,29 @@ Binaries: `cargo build --release -p host-tools` (eo-driver, eo-shim, build-eo-im
 build-image, extract-source, ob2unix). EO source as plain text:
 `target/debug/ob2unix <file>`.
 
-**The easy path (no emulator GUI, ~0.5 s):** build the whole headless system from an
-EO source tree (e.g. an `extract-source` tree of an EO `RISC.img`), then use it:
+**Round-trip — extract → build → boot (~4 s build):**
 ```
-target/release/build-eo-image /tmp/eo-ls /tmp/eo-system   # compile toolchain + link InnerCore
-target/release/eo-shim /tmp/eo-system ORP.Compile Foo.Mod/s   # compile a module
-target/release/eo-shim /tmp/eo-system Foo.Bar                 # run a command
+CLEAN=$(find /tmp/eo-clean -iname RISC.img | head -1)         # a pristine EO AP 1.1.26 image
+target/release/extract-source "$CLEAN" /tmp/eo-src            # clean .Mod tree + .packonly
+target/release/build-eo-image /tmp/eo-src /tmp/eo-out.dsk     # compile all of EO -> bootable disk
+target/release/eo-driver /tmp/eo-out.dsk --frames 1000 --fb-out /tmp/eo.pgm   # boot it headless
+target/release/risc /tmp/eo-out.dsk                          # ...or boot it in the GUI window
 ```
-`build-eo-image` prints `Inner core reproduces the golden bootstrap (23160 bytes)` and
-the output dir holds `InnerCore` + the toolchain `.rsc`/`.smb`. The source tree may be
-an `--keep-objects` extraction; build-eo-image stages only the `.Mod` (stale `.smb`
-would suppress fresh symbol-file generation — see Gotchas).
+The rebuilt disk boots to the EO desktop, framebuffer hash `0x1bed5d10ac9ec259` —
+identical to booting `$CLEAN` itself. Extract *without* `--keep-objects` (a clean
+`.Mod`+data tree); a stale `.smb`/`.rsc` in the tree would shadow the fresh build (see
+Gotchas). To compile/run ad-hoc EO commands headless, point `eo-shim` at any directory
+holding an `InnerCore` + the needed `.rsc` (e.g. the seed in `assets/eo-Bootstrap/`).
 
-**Regenerating the seed (only if the glue/sources change):** drive the *live* EO
-emulator to compile everything and link the `Modules` core, then vendor the result.
+**Regenerating the seed.** Routine re-vendor (after a glue tweak) is easiest via the
+shim: recompile the changed glue against the current seed (`eo-shim assets/eo-Bootstrap
+ORP.Compile X.Mod/s` → fresh `X.rsc`) and copy it into `assets/eo-Bootstrap/`; a fresh
+`build-eo-image` run then re-derives + golden-checks the `InnerCore`. The from-scratch
+bootstrap below drives the *live* EO emulator instead — note it predates the `.rsx`
+`CoreLinker`, so its `CoreLinker` reads `.rsc` (the live system's own objects) and its
+final `ORP.Compile CoreLinker.Mod` must be the `.rsx`-reading source for the seed.
 `CoreLinker` is compiled FIRST against EO's *real* modules (so it loads in the running
-system to do the link), then recompiled against the glue at the end for the seed.
+system to do the link), then recompiled at the end for the seed.
 ```
 CLEAN=$(find /tmp/eo-clean -iname RISC.img | head -1)     # EO AP 1.1.26; or untar /tmp/S3RISCinstall.tar.gz
 printf 'Oberon.Batch  ORP.Compile CoreLinker.Mod/s ~  ORP.Compile Norebo.Mod/s Kernel.Mod/s Disk.Mod/s FileDir.Mod/s Files.Mod/s ~  ORP.Compile Modules.Mod/s Fonts.Mod/s Texts.Mod/s RS232.Mod/s Oberon.Mod/s ~  ORP.Compile ORS.Mod/s ORB.Mod/s ~  ORP.Compile ORG.Mod/s ~  ORP.Compile ORP.Mod/s ~  CoreLinker.LinkSerial Modules InnerCore ~  ORP.Compile CoreLinker.Mod/s ~  System.ShowModules ~\r' > /tmp/eo-build/System.Tool
@@ -247,8 +269,9 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
   `disk.rs:57` — the `0x80002` SD rebase.
 - `host_tools::shim` (`src/shim.rs`): syscall ABI; `trap` (~190) prints
   trap-type + module + pos (so boot crashes are debuggable).
-- `src/bin/build-eo-image/main.rs`: the headless EO pipeline — `SEED` (embedded glue +
-  `eo-Bootstrap` objects), `TOOLCHAIN_GROUPS` (compile order), `build()`.
+- `src/bin/build-eo-image/main.rs`: the EO disk pipeline — `TOOLCHAIN` (embedded glue +
+  `VDisk` family + `eo-Bootstrap` objects), `NOREBO_MODULES`, `build()`. Compile order
+  comes from `host_tools::resolve` (shared with `build-image`).
 - EO reference sources (ob2unix'd, regenerate with `target/debug/ob2unix`):
   `/tmp/eo-txt/{Modules,Kernel,Disk,Files,FileDir,Oberon}.Mod`. EO's `Modules.Load`
   (`/tmp/eo-txt/Modules.Mod` ~56–220) is the fixup/format reference for `CoreLinker`.
@@ -259,16 +282,17 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
 - **Inner-core top module is `Modules`, not `Oberon`.** Only the top body runs at boot;
   `Modules`'s body is the standard EO init+load sequence. A self-contained `Oberon`-top
   core can't initialise the heap (its body never calls `Kernel.Init`). See "RESOLVED".
-- **Inner core via `CoreLinker.LinkSerial` (norebo serializer), not `ORL.Link`.**
-  `ORL.Link` makes the *output disk* boot file (FPGA format); the shim inner core
-  needs the `(len,addr,bytes)` serial format → `CoreLinker`. (`ORL` is the candidate
-  tool for the eventual output-`.dsk` step — see "What's next".)
-- **`build-eo-image` builds in the shim, single-pass.** Unlike the live-EO seed
-  bootstrap, the shim's compiler is already the glue, so the whole toolchain (incl.
-  `CoreLinker`) compiles glue-first with no double-compile, then links in place
-  (EO reads `.rsc`; no rsc→rsx rename).
-- **`build-eo-image` output is the headless system** (`InnerCore` + objects), runnable
-  via `eo-shim` — which is what "run an agent on EO" needs. The GUI-bootable `.dsk`
-  (`ORL`/`Disk` sectors) is deferred; see "What's next".
+- **The shim inner core uses `CoreLinker.LinkSerial` (norebo serializer); the output
+  disk uses `CoreLinker.LinkDisk`** — not EO's native `ORL`. The shim boots the
+  `(len,addr,bytes)` serial core; the disk boot core is the `LinkDisk` format the shared
+  RISC5 PROM loads. Both link `Modules`-top, so both boot the same way. (EO's own
+  `ORL.Link`/`ORL.Load` would need a shim disk-sector backend — a possible follow-up.)
+- **`build-eo-image` is structurally `build-image` with a different seed.** Same
+  `NOREBO_MODULES`, `.rsx` rename, `CoreLinker.LinkDisk` + `VDiskUtil.InstallFiles`. The
+  `VDisk` family + the FS format are shared (PO2013 ≡ EO `FileDir`/`Files`), so they
+  port unchanged. Compile-order resolution lives in `host_tools::resolve` (shared).
+- **`build-eo-image` output is a bootable `Oberon.dsk`** (the EO desktop), like
+  `build-image`. For headless agent use, `eo-shim` runs commands against any
+  `InnerCore`+objects directory (e.g. the vendored seed).
 - **Bootstrap via the scripted `eo-driver`** (drive the real EO emulator), not a
   manual GUI session — it's the same control plane the on-EO agent will use.

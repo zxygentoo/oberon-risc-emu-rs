@@ -9,6 +9,12 @@
 //! are embedded in this binary (`assets/`, vendored from project-norebo), so no
 //! external checkout is needed. Only the finished image is written, to `<output.dsk>`
 //! (intermediate compile trees live in a temp scratch dir and are removed).
+//!
+//! Every file in `sources_dir` is compiled as Oberon source and packed into the
+//! image, except those named in the tree's required `.packonly` manifest, which
+//! are packed verbatim (data files, and reference modules not meant to compile);
+//! see [`resolve`]. Custom modules thus need no special handling: drop them
+//! in, leave them off `.packonly`, and they compile and pack like any other.
 
 use std::path::{Path, PathBuf};
 use std::process::exit;
@@ -16,6 +22,7 @@ use std::{fs, io};
 
 use clap::Parser;
 
+mod resolve;
 mod shim;
 use shim::run;
 
@@ -42,50 +49,6 @@ const NOREBO_MODULES: &[&str] = &[
     "VFileDir.Mod",
     "VFiles.Mod",
     "VDiskUtil.Mod",
-];
-
-/// The full Project Oberon 2013 module set compiled into the image, in
-/// dependency order (project-norebo's manifest `source` rows). This is a fixed,
-/// co-tuned set, so it is baked in rather than read from a manifest.
-const PO2013_MODULES: &[&str] = &[
-    "Kernel.Mod",
-    "FileDir.Mod",
-    "Files.Mod",
-    "Modules.Mod",
-    "Input.Mod",
-    "Display.Mod",
-    "Viewers.Mod",
-    "Fonts.Mod",
-    "Texts.Mod",
-    "Oberon.Mod",
-    "MenuViewers.Mod",
-    "TextFrames.Mod",
-    "System.Mod",
-    "Edit.Mod",
-    "SCC.Mod",
-    "ORS.Mod",
-    "ORB.Mod",
-    "ORG.Mod",
-    "ORP.Mod",
-    "ORTool.Mod",
-    "Graphics.Mod",
-    "GraphicFrames.Mod",
-    "Draw.Mod",
-    "GraphTool.Mod",
-    "Rectangles.Mod",
-    "Curves.Mod",
-    "Blink.Mod",
-    "Checkers.Mod",
-    "EBNF.Mod",
-    "Hilbert.Mod",
-    "MacroTool.Mod",
-    "Math.Mod",
-    "PCLink1.Mod",
-    "RS232.Mod",
-    "Sierpinski.Mod",
-    "Stars.Mod",
-    "Tools.Mod",
-    "Clipboard.Mod",
 ];
 
 /// The embedded toolchain seed, vendored from project-norebo (see `assets/`):
@@ -195,13 +158,32 @@ const TOOLCHAIN: &[(&str, &[u8])] = &[
     ),
 ];
 
+/// The `.packonly` manifest section appended to `--help` (see [`resolve`]).
+const PACKONLY_HELP: &str = "\
+The .packonly manifest:
+  Every file in SOURCES_DIR is compiled as Oberon source and packed into the
+  image, except those listed in `.packonly` (at the tree root), which are packed
+  verbatim: data such as fonts and tools, and reference modules that ship as
+  source but are not meant to compile.
+
+  The manifest is required; an empty one compiles everything. One file name per
+  line; blank lines and `#` comments are ignored.
+
+  Custom modules need no special handling — drop your .Mod files into the tree,
+  leave them off .packonly, and they compile (in dependency order, worked out from
+  their IMPORT lists) and pack like any other module. A file left off .packonly
+  that is not valid Oberon source fails the build with a clear error.
+
+  extract-source generates .packonly; for a fetch-sources.py tree, derive it from
+  the source manifest's non-`source` rows.";
+
 /// Build a runnable Project Oberon disk image from a source tree.
 ///
 /// Compiles Project Oberon with the embedded Norebo toolchain and assembles a
 /// bootable disk image. The sources are fetched separately (e.g. by
 /// project-norebo's `fetch-sources.py`); only the finished image is written.
 #[derive(Parser, Debug)]
-#[command(name = "build-image", version)]
+#[command(name = "build-image", version, after_long_help = PACKONLY_HELP)]
 struct Cli {
     /// Project Oberon source tree (e.g. from project-norebo's fetch-sources.py)
     #[arg(value_name = "SOURCES_DIR")]
@@ -225,9 +207,15 @@ fn main() {
 /// finished `Oberon.dsk` to `output` — the intermediate compile trees are thrown
 /// away. On failure the scratch dir is left behind for inspection.
 fn build_image(sources: &Path, output: &Path) -> io::Result<()> {
+    // Settle what to compile before touching the toolchain, so a bad source tree
+    // (no .packonly, a data file left off it, a duplicate module, an import cycle)
+    // fails fast and clearly — with no half-built scratch dir to explain.
+    let visible = sorted_visible(sources)?;
+    let plan = resolve::resolve(sources, &visible)?;
+
     let scratch = std::env::temp_dir().join(format!("norebo-build-{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch); // clear any stale run
-    match build(sources, &scratch) {
+    match build(sources, &scratch, &visible, &plan) {
         Ok(dsk) => {
             if let Some(parent) = output.parent() {
                 if !parent.as_os_str().is_empty() {
@@ -250,7 +238,12 @@ fn build_image(sources: &Path, output: &Path) -> io::Result<()> {
 
 /// Compile and link everything inside `scratch`, returning the path to the
 /// finished disk image (`scratch/Oberon.dsk`).
-fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
+fn build(
+    sources: &Path,
+    scratch: &Path,
+    visible: &[String],
+    plan: &[resolve::Candidate],
+) -> io::Result<PathBuf> {
     fs::create_dir_all(scratch)?;
     let toolchain = mksubdir(scratch, "toolchain")?;
     extract_toolchain(&toolchain)?;
@@ -289,14 +282,18 @@ fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
     bulk_delete(&norebo_dir, "smb")?;
     bulk_delete(&compiler_dir, "smb")?;
 
-    eprintln!("Compiling the complete Project Oberon 2013");
-    compile(PO2013_MODULES, &oberon_dir, &std_path)?;
-    // Fail loudly on a partial source tree rather than shipping a broken image.
-    for m in PO2013_MODULES {
-        let rsc = oberon_dir.join(m.replace(".Mod", ".rsc"));
+    eprintln!("Compiling {} module(s) from the source tree", plan.len());
+    let order: Vec<&str> = plan.iter().map(|c| c.file.as_str()).collect();
+    compile(&order, &oberon_dir, &std_path)?;
+    // Fail loudly on a module that produced no object rather than shipping a
+    // broken image. Objects are named by the module, not the source file.
+    for c in plan {
+        let rsc = oberon_dir.join(format!("{}.rsc", c.module));
         if !rsc.exists() {
             return Err(io::Error::other(format!(
-                "{m} did not compile (no {})",
+                "{} (MODULE {}) did not compile (no {})",
+                c.file,
+                c.module,
                 rsc.display()
             )));
         }
@@ -315,15 +312,18 @@ fn build(sources: &Path, scratch: &Path) -> io::Result<PathBuf> {
         "VDiskUtil.InstallFiles".to_string(),
         "Oberon.dsk".to_string(),
     ];
-    for name in sorted_visible(sources)? {
+    for name in visible {
         install.push(format!("{name}=>{name}"));
     }
-    for m in PO2013_MODULES {
-        let smb = m.replace(".Mod", ".smb");
-        let rsx = m.replace(".Mod", ".rsx");
-        let rsc = m.replace(".Mod", ".rsc");
+    // The freshly built objects (renamed .rsc->.rsx above) and their symbol
+    // files, taken from what actually compiled rather than a fixed list, each
+    // mapped back to the .rsc name the on-target loader expects.
+    for rsx in files_with_ext(&oberon_dir, "rsx")? {
+        let rsc = Path::new(&rsx).with_extension("rsc");
+        install.push(format!("{rsx}=>{}", rsc.display()));
+    }
+    for smb in files_with_ext(&oberon_dir, "smb")? {
         install.push(format!("{smb}=>{smb}"));
-        install.push(format!("{rsx}=>{rsc}"));
     }
     let install: Vec<&str> = install.iter().map(String::as_str).collect();
     run_checked(
@@ -399,6 +399,17 @@ fn sorted_visible(dir: &Path) -> io::Result<Vec<String>> {
         .filter_map(Result::ok)
         .filter_map(|e| e.file_name().into_string().ok())
         .filter(|n| !n.starts_with('.'))
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// File names in `dir` with extension `ext`, sorted — a deterministic install order.
+fn files_with_ext(dir: &Path, ext: &str) -> io::Result<Vec<String>> {
+    let mut names: Vec<String> = fs::read_dir(dir)?
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| Path::new(n).extension().and_then(|e| e.to_str()) == Some(ext))
         .collect();
     names.sort();
     Ok(names)

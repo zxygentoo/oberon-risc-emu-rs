@@ -46,6 +46,20 @@ bootstrap objects that seed the first compile are embedded in the binary (see
 cargo run -p host-tools --release --bin build-image -- path/to/sources out.dsk
 ```
 
+Which files get compiled is governed by a **`.packonly`** manifest in the source
+tree (required): every file is compiled as Oberon source and packed into the
+image *except* those listed, which are packed verbatim — data (fonts, tools) and
+reference modules that ship as source but aren't meant to compile. An empty
+manifest compiles everything. `extract-source` generates it; for a
+`fetch-sources.py` tree, derive it from the manifest's non-`source` rows.
+
+**Mixing in custom modules** then needs no special flags: drop your `.Mod` files
+into the source tree, leave them off `.packonly`, and they are compiled (in
+dependency order, worked out from their `IMPORT` lists) and packed as loadable
+objects like any other module. List any custom *data* you add in `.packonly`;
+anything left off it that isn't valid Oberon source fails the build with a clear
+error rather than being fed to the compiler.
+
 Internally the headless runtime is one function — [`shim::run`](src/bin/build-image/shim.rs) —
 which executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion against
 the host filesystem and returns its guest exit code; `build-image` drives it
@@ -56,7 +70,9 @@ repeatedly to compile the system and lay down the disk.
 Extracts the source files from a Project Oberon `.dsk` image into a host
 directory — the inverse of `build-image`. It drops the compiled artifacts
 (`.rsc`/`.smb`, which `build-image` regenerates from source), so the output is a
-build-ready tree. It reads the Oberon on-disk filesystem directly (see
+build-ready tree. It also writes the `.packonly` manifest `build-image` requires,
+derived from which `.Mod` files carry a compiled object on the image. It reads the
+Oberon on-disk filesystem directly (see
 [`dsk.rs`](src/bin/extract-source/dsk.rs)), so it needs no emulator and no boot:
 
 ```sh
@@ -73,16 +89,17 @@ Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
 cargo test -p host-tools
 ```
 
-Unit tests cover the converters' pure functions and `build-image`'s filesystem
-helpers; [`tests/cli.rs`](tests/cli.rs) exercises each binary end-to-end (argument
-handling, exit codes, round-trips). One integration test,
-`build_image_reproduces_the_boot_golden`, builds a disk image from a source tree
-and boots it to the same C-derived golden hash as the core's boot test; it's
-gated on `OBERON_SOURCES` (a fetched PO2013 tree, e.g. project-norebo's
-`upstream/`):
+Unit tests cover the converters' pure functions, the `.packonly` and import-order
+logic, and `build-image`'s filesystem helpers; [`tests/cli.rs`](tests/cli.rs)
+exercises each binary end-to-end (argument handling, exit codes, the build's
+fail-clear paths). One heavy, self-contained integration test,
+`build_image_round_trips_the_golden`, extracts the committed golden image and
+rebuilds it, checking the result boots to the same C-derived golden hashes as the
+core's boot test. It compiles all of Oberon through the shim, so it's `#[ignore]`d
+by default:
 
 ```sh
-OBERON_SOURCES=/path/to/po2013/sources cargo test -p host-tools
+cargo test -p host-tools --release -- --ignored
 ```
 
 ## License

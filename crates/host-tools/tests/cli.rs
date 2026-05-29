@@ -1,4 +1,5 @@
-//! End-to-end tests for the `ob2unix`, `asciidecoder`, and `build-image` binaries.
+//! End-to-end tests for the `ob2unix`, `asciidecoder`, `build-image`, and
+//! `extract-source` binaries.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,7 @@ use risc_core::risc::Risc;
 const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
 const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
 const EXTRACT_SOURCE: &str = env!("CARGO_BIN_EXE_extract-source");
+const BUILD_IMAGE: &str = env!("CARGO_BIN_EXE_build-image");
 
 /// Run `bin` with `args`, feed `input` on stdin, and capture its output.
 fn run(bin: &str, args: &[&str], input: &[u8]) -> Output {
@@ -181,39 +183,50 @@ fn asciidecoder_rejects_unknown_flag() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
 }
 
-// Gated on OBERON_SOURCES (a fetched Project Oberon source tree); the PO2013
-// sources aren't vendored, so default CI skips this. Point it at e.g.
-// project-norebo's `upstream` directory.
+// Heavy: compiles all of Project Oberon through the shim, so it's `#[ignore]`d —
+// run with `cargo test -p host-tools -- --ignored`. Self-contained: it round-trips
+// the committed golden image (extract its sources, including the generated
+// `.packonly`, then rebuild) and checks the rebuild boots identically.
 #[test]
-fn build_image_reproduces_the_boot_golden() {
-    let Ok(sources) = std::env::var("OBERON_SOURCES") else {
-        eprintln!("OBERON_SOURCES not set; skipping build-image golden test");
+#[ignore = "compiles all of Oberon via the shim; run with --ignored"]
+fn build_image_round_trips_the_golden() {
+    let Some(img) = golden_image() else {
+        eprintln!("golden image not present; skipping round-trip test");
         return;
     };
 
-    let dir = scratch_dir("build-image");
-    let dsk = dir.join("Oberon.dsk");
-    let status = Command::new(env!("CARGO_BIN_EXE_build-image"))
-        .arg(&sources)
+    let src = scratch_dir("round-trip-src");
+    let out = run(
+        EXTRACT_SOURCE,
+        &[img.to_str().unwrap(), src.to_str().unwrap()],
+        b"",
+    );
+    assert!(
+        out.status.success(),
+        "extract-source failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let dst = scratch_dir("round-trip-build");
+    let dsk = dst.join("Oberon.dsk");
+    let status = Command::new(BUILD_IMAGE)
+        .arg(&src)
         .arg(&dsk)
         .status()
         .expect("spawn build-image");
     assert!(status.success(), "build-image failed");
-    assert_eq!(
-        std::fs::metadata(&dsk).expect("image produced").len(),
-        990_208,
-        "unexpected image size",
-    );
 
-    // The freshly built image must boot bit-identically to the C-derived golden
-    // (frame 250), the same hashes risc-core's boot_matches_c_reference checks.
+    // The boot hashes come from the running machine (modules load by name, not by
+    // disk layout), so the rebuild must boot to the C-derived golden even though
+    // its on-disk byte layout may differ from the original image.
     let mut risc = Risc::new();
     risc.set_spi(1, Box::new(Disk::new(Some(&dsk)).expect("open disk")));
     headless::run_frames(&mut risc, 250);
     assert_eq!(headless::framebuffer_hash(&risc), 0xb9bd_bf56_ba51_298d);
     assert_eq!(headless::state_hash(&risc), 0x7531_e881_9ea3_aac1);
 
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&src);
+    let _ = std::fs::remove_dir_all(&dst);
 }
 
 /// The committed golden disk image (repo `DiskImage/`), resolved relative to this
@@ -243,19 +256,32 @@ fn extract_source_yields_a_build_ready_tree() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // The compiled artifacts are dropped (38 .rsc + 38 .smb), leaving 60 sources.
+    // Compiled artifacts are dropped (38 .rsc + 38 .smb); 60 sources remain, plus
+    // the generated .packonly manifest.
     let names: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names.len(), 60, "expected 60 source files");
+    let sources: Vec<&String> = names.iter().filter(|n| n.as_str() != ".packonly").collect();
+    assert_eq!(sources.len(), 60, "expected 60 source files");
     assert!(
-        !names.iter().any(|n| matches!(
+        !sources.iter().any(|n| matches!(
             Path::new(n).extension().and_then(|e| e.to_str()),
             Some("rsc" | "smb")
         )),
         "compiled artifacts were not skipped"
     );
+
+    // The manifest marks the data files and the reference modules that ship as
+    // source with no object, but not a module that actually compiled.
+    let pack = host_tools::packonly::parse(
+        &std::fs::read_to_string(dir.join(".packonly")).expect(".packonly generated"),
+    );
+    assert_eq!(pack.len(), 22, "expected 22 pack-only entries");
+    assert!(pack.contains("Display.Orig.Mod")); // reference original, never compiled
+    assert!(pack.contains("BootLoad.Mod")); // hardware module, not in the build
+    assert!(pack.contains("Oberon10.Scn.Fnt")); // a font (data)
+    assert!(!pack.contains("Kernel.Mod")); // a compiled module's source
 
     // A known module came out byte-complete and as readable source.
     let kernel = std::fs::read(dir.join("Kernel.Mod")).expect("Kernel.Mod extracted");
@@ -265,5 +291,71 @@ fn extract_source_yields_a_build_ready_tree() {
         "Kernel.Mod is not the expected source"
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `build-image` rejects a tree with no `.packonly` (it's required), failing fast
+/// — before the heavy toolchain build — with a clear message.
+#[test]
+fn build_image_requires_a_packonly() {
+    let dir = scratch_dir("bi-no-packonly");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("Foo.Mod"), b"MODULE Foo; END Foo.").unwrap();
+    let out = run(
+        BUILD_IMAGE,
+        &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains(".packonly"),
+        "expected a .packonly error, got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A non-source file left off `.packonly` is a compile candidate, so the build
+/// fails clearly and points back at `.packonly` rather than feeding it to ORP.
+#[test]
+fn build_image_rejects_unlisted_non_source() {
+    let dir = scratch_dir("bi-unlisted-data");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(".packonly"), b"").unwrap(); // nothing pack-only...
+    std::fs::write(dir.join("Logo.Fnt"), [0u8, 1, 2, 3]).unwrap(); // ...but this is data
+    let out = run(
+        BUILD_IMAGE,
+        &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Logo.Fnt") && err.contains(".packonly"),
+        "got: {err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Two candidates that declare the same module collide (the forgotten-skip-entry
+/// backstop), and the build says so instead of silently clobbering one object.
+#[test]
+fn build_image_reports_a_duplicate_module() {
+    let dir = scratch_dir("bi-dup-module");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(".packonly"), b"").unwrap();
+    std::fs::write(dir.join("A.Mod"), b"MODULE Same; END Same.").unwrap();
+    std::fs::write(dir.join("B.Mod"), b"MODULE Same; END Same.").unwrap();
+    let out = run(
+        BUILD_IMAGE,
+        &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
+        b"",
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("MODULE Same"),
+        "got: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

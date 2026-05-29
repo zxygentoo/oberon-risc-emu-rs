@@ -5,6 +5,11 @@
 //! live here so there is a single source of truth (and one set of tests) rather
 //! than a copy per binary that can quietly drift.
 
+/// The headless `shim` runtime: boots an inner-core image on the `risc-core` CPU
+/// and maps Oberon's `Kernel`/`Files` operations onto the host (a Rust port of
+/// project-norebo). Used by `build-image`, the EO bring-up, and `build-eo-image`.
+pub mod shim;
+
 /// Whether byte `ch` is legal at 0-based position `i` of a Project Oberon file
 /// name: a leading ASCII letter, then letters, digits, or `.` (the `FileDir.Mod`
 /// rule, mirrored by `norebo.c`'s `files_check_name`).

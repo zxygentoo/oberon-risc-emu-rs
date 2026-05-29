@@ -23,8 +23,7 @@ use std::{fs, io};
 use clap::Parser;
 
 mod resolve;
-mod shim;
-use shim::run;
+use host_tools::shim::run;
 
 /// Modules compiled to seed the host toolchain, then linked into a fresh inner
 /// core (project-norebo's `build_norebo` set). The host versions of

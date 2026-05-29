@@ -11,7 +11,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use host_tools::name_char_ok;
+use crate::name_char_ok;
 use risc_core::io::{ShimHost, ShimMem};
 use risc_core::risc::Risc;
 

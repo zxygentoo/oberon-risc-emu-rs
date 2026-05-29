@@ -13,6 +13,7 @@ const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
 const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
 const EXTRACT_SOURCE: &str = env!("CARGO_BIN_EXE_extract-source");
 const BUILD_IMAGE: &str = env!("CARGO_BIN_EXE_build-image");
+const BUILD_EO_IMAGE: &str = env!("CARGO_BIN_EXE_build-eo-image");
 
 /// Run `bin` with `args`, feed `input` on stdin, and capture its output.
 fn run(bin: &str, args: &[&str], input: &[u8]) -> Output {
@@ -358,4 +359,95 @@ fn build_image_reports_a_duplicate_module() {
         String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ----------------------- Extended Oberon (build-eo-image) -----------------------
+
+/// Copy the committed EO bootstrap seed (`InnerCore` + glue `.rsc`) into `dir`.
+fn stage_eo_seed(dir: &Path) -> PathBuf {
+    let seed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/eo-Bootstrap");
+    std::fs::create_dir_all(dir).unwrap();
+    for entry in std::fs::read_dir(&seed).expect("eo-Bootstrap seed present") {
+        let p = entry.unwrap().path();
+        std::fs::copy(&p, dir.join(p.file_name().unwrap())).unwrap();
+    }
+    dir.to_path_buf()
+}
+
+/// The committed EO inner core boots headlessly under the `shim` and runs the
+/// whole compile→load→execute path: it compiles a trivial module (`Tiny`, no
+/// imports — all the seed has objects for) and then runs the freshly built
+/// command. Hermetic and self-contained (the seed is vendored), so it guards the
+/// EO bring-up without an external source tree. Heavier than a unit test (it
+/// boots a CPU and dynamically loads the EO compiler) but far lighter than a full
+/// system build.
+#[test]
+fn eo_seed_boots_compiles_and_runs() {
+    let dir = scratch_dir("eo-seed-smoke");
+    stage_eo_seed(&dir);
+    std::fs::write(
+        dir.join("Tiny.Mod"),
+        b"MODULE Tiny;\n  PROCEDURE Go*;\n  BEGIN\n  END Go;\nEND Tiny.\n",
+    )
+    .unwrap();
+
+    let path = [dir.clone()];
+    let compile = host_tools::shim::run(&["ORP.Compile".into(), "Tiny.Mod/s".into()], &dir, &path)
+        .expect("shim run (compile)");
+    assert_eq!(compile, 0, "compiling Tiny in the EO seed should succeed");
+    assert!(
+        dir.join("Tiny.rsc").exists(),
+        "ORP.Compile produced no Tiny.rsc"
+    );
+
+    let go = host_tools::shim::run(&["Tiny.Go".into()], &dir, &path).expect("shim run (Go)");
+    assert_eq!(go, 0, "running the freshly compiled Tiny.Go should succeed");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Full `build-eo-image`: from an Extended Oberon source tree, rebuild the headless
+/// EO system and check it reproduces the committed golden inner core byte-for-byte
+/// and ships every object with its symbol file. Needs an EO source tree (the stock
+/// `Modules`/`Fonts`/`Texts`/`OR*` sources aren't vendored); point `EO_SOURCES_DIR`
+/// at one (e.g. an `extract-source` tree of an EO `RISC.img`) — skipped otherwise.
+/// Heavy (compiles the EO toolchain through the shim), so it's `#[ignore]`d.
+#[test]
+#[ignore = "needs EO_SOURCES_DIR and compiles the EO toolchain via the shim; run with --ignored"]
+fn build_eo_image_reproduces_the_inner_core() {
+    let Some(src) = std::env::var_os("EO_SOURCES_DIR").map(PathBuf::from) else {
+        eprintln!("EO_SOURCES_DIR not set; skipping build-eo-image round-trip");
+        return;
+    };
+
+    let out = scratch_dir("eo-build-out");
+    let status = Command::new(BUILD_EO_IMAGE)
+        .arg(&src)
+        .arg(&out)
+        .status()
+        .expect("spawn build-eo-image");
+    assert!(status.success(), "build-eo-image failed");
+
+    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/eo-Bootstrap/InnerCore");
+    assert_eq!(
+        std::fs::read(out.join("InnerCore")).expect("built InnerCore"),
+        std::fs::read(&golden).expect("golden InnerCore"),
+        "rebuilt inner core does not reproduce the committed golden"
+    );
+    // The system ships objects with their symbol files, so downstream compiles
+    // (modules that import the system) resolve their imports.
+    for m in [
+        "Kernel",
+        "Files",
+        "Modules",
+        "Oberon",
+        "Texts",
+        "ORP",
+        "CoreLinker",
+    ] {
+        assert!(out.join(format!("{m}.rsc")).exists(), "missing {m}.rsc");
+        assert!(out.join(format!("{m}.smb")).exists(), "missing {m}.smb");
+    }
+
+    let _ = std::fs::remove_dir_all(&out);
 }

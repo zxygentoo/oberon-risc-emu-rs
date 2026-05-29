@@ -65,6 +65,12 @@ struct Cli {
     /// or a `PCLink` transfer to complete.
     #[arg(long, default_value_t = 180)]
     after: u32,
+
+    /// Push a host file onto EO over `PCLink` (repeatable). Each is sent under its
+    /// basename, after the pointer/click step (which must start `PCLink1.Run`).
+    /// Requires --pclink-dir.
+    #[arg(long, value_name = "HOSTFILE")]
+    push: Vec<PathBuf>,
 }
 
 /// Bytes in flight on the serial line, shared between the driver and the device.
@@ -155,6 +161,27 @@ fn run(cli: &Cli) -> Result<(), String> {
             advance(&mut risc, &mut frame, 8, frame_ms, cycles);
             risc.mouse_button(2, false);
         }
+    }
+
+    // Push files onto EO over PCLink (PCLink1.Run must already be running, e.g.
+    // started by the --move-to/--mid-click above). Each push stages the file plus
+    // a PCLink.REC job, then runs frames for the transfer.
+    if !cli.push.is_empty() {
+        let dir = cli
+            .pclink_dir
+            .as_ref()
+            .ok_or("--push requires --pclink-dir")?;
+        for hostfile in &cli.push {
+            let name = hostfile
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| format!("bad --push file name: {}", hostfile.display()))?;
+            std::fs::copy(hostfile, dir.join(name)).map_err(|e| format!("stage {name}: {e}"))?;
+            std::fs::write(dir.join("PCLink.REC"), name).map_err(|e| format!("PCLink.REC: {e}"))?;
+            eprintln!("Pushing {name} -> EO");
+            advance(&mut risc, &mut frame, 6000, frame_ms, cycles);
+        }
+        let _ = std::fs::remove_file(dir.join("PCLink.REC"));
     }
 
     // Settle / transfer time after the input step (a command finishing, or a

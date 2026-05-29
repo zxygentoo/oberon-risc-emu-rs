@@ -28,14 +28,15 @@ Done + tested:
 Drafted (untested — no compiler in the loop yet): the EO host glue `Kernel` +
 `Disk` in `assets/eo-norebo/` (see "Glue" below).
 
-In progress: the **headless driver** (`eo-driver` bin). Milestone 1 done + verified
-— it boots EO's `RISC.img` on `risc-core` with no GUI, captures the serial line,
-and dumps the framebuffer; EO `AP 1.1.26` reaches its desktop headless in ~86 ms,
-confirming `risc-core` needs no changes.
+In progress: the **headless driver** (`eo-driver` bin). M1 (boot) and M2 (drive)
+both working: boots EO headless (~86 ms to desktop); executes commands via a
+synthetic middle-click (verified `System.Grow`, `Hilbert.Draw`); and moves files
+both ways over PCLink, byte-accurate (fetched `Disk.Mod`, pushed a module onto
+EO's disk and read it back). `risc-core` is unchanged.
 
-Not started: the rest of the glue (`Files`/`FileDir`/`Oberon` stub), command
-injection in `eo-driver` (M2), the ORL link step driven through it, and the
-`build-eo-image` bin itself.
+Not started: compile-testing the glue (push `Kernel`/`Disk`, run `ORP.Compile`,
+read the log), the rest of the glue (`Files`/`FileDir`/`Oberon` stub), the ORL
+link step, and the `build-eo-image` bin itself.
 
 ## Verified facts (this session)
 

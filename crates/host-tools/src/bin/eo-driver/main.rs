@@ -19,6 +19,7 @@ use clap::Parser;
 use risc_core::disk::Disk;
 use risc_core::headless::{framebuffer_hash, CPU_HZ, FPS};
 use risc_core::io::Serial;
+use risc_core::pclink::PcLink;
 use risc_core::risc::Risc;
 
 /// Boot an Extended Oberon disk image headless and observe it.
@@ -53,6 +54,17 @@ struct Cli {
     /// pointer" gesture. Requires --move-to.
     #[arg(long)]
     mid_click: bool,
+
+    /// Use the `PCLink` file-transfer serial backend, watching this directory for
+    /// `PCLink.REC`/`PCLink.SND` job files (start `PCLink1.Run` on EO first, e.g.
+    /// via --move-to/--mid-click). Replaces the default serial-capture backend.
+    #[arg(long, value_name = "DIR")]
+    pclink_dir: Option<PathBuf>,
+
+    /// Frames to run after the pointer/click step — time for a command to finish
+    /// or a `PCLink` transfer to complete.
+    #[arg(long, default_value_t = 180)]
+    after: u32,
 }
 
 /// Bytes in flight on the serial line, shared between the driver and the device.
@@ -92,7 +104,14 @@ fn run(cli: &Cli) -> Result<(), String> {
     let disk =
         Disk::new(Some(&cli.image)).map_err(|e| format!("open disk {}: {e}", cli.image.display()))?;
     risc.set_spi(1, Box::new(disk));
-    risc.set_serial(Box::new(CaptureSerial(serial.clone())));
+    match &cli.pclink_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("pclink dir {}: {e}", dir.display()))?;
+            risc.set_serial(Box::new(PcLink::in_dir(dir.clone())));
+        }
+        None => risc.set_serial(Box::new(CaptureSerial(serial.clone()))),
+    }
 
     let frame_ms = 1000 / FPS;
     let cycles = CPU_HZ / FPS;
@@ -135,11 +154,17 @@ fn run(cli: &Cli) -> Result<(), String> {
             risc.mouse_button(2, true);
             advance(&mut risc, &mut frame, 8, frame_ms, cycles);
             risc.mouse_button(2, false);
-            advance(&mut risc, &mut frame, 180, frame_ms, cycles);
         }
     }
 
+    // Settle / transfer time after the input step (a command finishing, or a
+    // PCLink transfer running while EO's PCLink1.Run polls the serial line).
+    advance(&mut risc, &mut frame, cli.after, frame_ms, cycles);
+
     report(&risc, &serial.borrow(), settled_at);
+    if let Some(dir) = &cli.pclink_dir {
+        report_pclink_dir(dir);
+    }
     if let Some(p) = &cli.fb_out {
         write_pgm(&risc, p).map_err(|e| format!("write {}: {e}", p.display()))?;
         eprintln!(
@@ -209,6 +234,24 @@ fn advance(risc: &mut Risc, frame: &mut u32, n: u32, frame_ms: u32, cycles: u32)
         risc.set_time(frame.wrapping_mul(frame_ms));
         risc.run(cycles);
         *frame += 1;
+    }
+}
+
+/// List what landed in the `PCLink` working directory (received transfers + jobs).
+fn report_pclink_dir(dir: &Path) {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            let mut names: Vec<String> = entries
+                .filter_map(Result::ok)
+                .map(|e| {
+                    let len = e.metadata().map_or(0, |m| m.len());
+                    format!("{} ({len}B)", e.file_name().to_string_lossy())
+                })
+                .collect();
+            names.sort();
+            eprintln!("PCLink dir {}: [{}]", dir.display(), names.join(", "));
+        }
+        Err(e) => eprintln!("PCLink dir {}: {e}", dir.display()),
     }
 }
 

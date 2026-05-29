@@ -22,7 +22,7 @@ use std::{fs, io};
 
 use clap::Parser;
 
-mod resolve;
+use host_tools::resolve;
 use host_tools::shim::run;
 
 /// Modules compiled to seed the host toolchain, then linked into a fresh inner

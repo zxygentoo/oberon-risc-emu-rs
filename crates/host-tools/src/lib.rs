@@ -10,6 +10,11 @@
 /// project-norebo). Used by `build-image`, the EO bring-up, and `build-eo-image`.
 pub mod shim;
 
+/// Decide which files of a source tree to compile (everything not in `.packonly`)
+/// and in what order (topological sort of their `IMPORT` lists). Shared by
+/// `build-image` and `build-eo-image`, which compile a whole Oberon source tree.
+pub mod resolve;
+
 /// Whether byte `ch` is legal at 0-based position `i` of a Project Oberon file
 /// name: a leading ASCII letter, then letters, digits, or `.` (the `FileDir.Mod`
 /// rule, mirrored by `norebo.c`'s `files_check_name`).

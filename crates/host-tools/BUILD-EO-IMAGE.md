@@ -34,9 +34,9 @@ synthetic middle-click (verified `System.Grow`, `Hilbert.Draw`); and moves files
 both ways over PCLink, byte-accurate (fetched `Disk.Mod`, pushed a module onto
 EO's disk and read it back). `risc-core` is unchanged.
 
-Not started: compile-testing the glue (push `Kernel`/`Disk`, run `ORP.Compile`,
-read the log), the rest of the glue (`Files`/`FileDir`/`Oberon` stub), the ORL
-link step, and the `build-eo-image` bin itself.
+Not started: the `ORL.Link` inner-core step, harvesting the seed, and the
+`build-eo-image` bin. (Compiler `ORS/ORB/ORG/ORP` + `ORL` compile against the glue
+— in progress.)
 
 ## Verified facts (this session)
 
@@ -71,22 +71,23 @@ link step, and the `build-eo-image` bin itself.
 | `NOREBO_MODULES` list | `+Disk`, `+ORL`/`ORX`, `−CoreLinker` |
 | Output | a `.dsk` (boots via the `disk.rs` rebase; no 260 MB SD image needed) |
 
-## Glue (`assets/eo-norebo/`)
+## Glue (`assets/eo-norebo/` + shared `assets/Norebo/`)
 
-Mirrors `assets/Norebo/` but for EO. `Kernel`/`Disk` are drafted from EO's *real*
-sources (so types + export interface match exactly), patched only at the
-hardware/headless boundary. Nothing is compile-tested yet — that needs the driver.
+The host glue for EO. **All of it compiles cleanly under EO's own compiler**
+(verified via the `eo-driver` compile-test loop), and EO's real runtime
+(`Modules`/`Fonts`/`Texts`/`RS232`) compiles against it.
 
-| Module | Plan | Status |
-| --- | --- | --- |
-| `Norebo` | syscall wrapper, EO-independent | reuse `assets/Norebo/Norebo.Mod` |
-| `Kernel` | EO `Kernel` + Trap→`Norebo.Trap` (2-line patch); GC/heap/Init unchanged | **drafted** |
-| `Disk` | EO `Disk` minus SD/SPI; sector-map allocator kept; `Get/PutSector` abort | **drafted** |
-| `Files` / `FileDir` | host-backed (Norebo syscalls), matched to EO's expanded interface | next |
-| `Oberon` (stub) | `Par`/`Log`/`GetSelection`/`Call` only — what ORP/ORL use | next |
+| Module | Source | EO change | Status |
+| --- | --- | --- | --- |
+| `Norebo` | `assets/Norebo/` | none (syscall wrapper) | compiles ✓ |
+| `Kernel` | `assets/eo-norebo/` | EO `Kernel` + Trap→`Norebo.Trap` | compiles ✓ |
+| `Disk` | `assets/eo-norebo/` | EO `Disk` minus SD/SPI; `Get/PutSector` abort | compiles ✓ |
+| `FileDir` | `assets/Norebo/` | none (host-backed, as-is) | compiles ✓ |
+| `Files` | `assets/Norebo/` | none (host-backed, as-is) | compiles ✓ |
+| `Oberon` (stub) | `assets/eo-norebo/` | GC→`Kernel.Collect`+`Modules.Collect`; 4-arg `New`; `mod.prg` | compiles ✓ |
 
-`Files`, `FileDir`, and the `Oberon` stub are deferred to the driver-enabled loop,
-where the compiler's own errors guide the interface reconciliation.
+Validated compile chain: `Norebo → Kernel → Disk → FileDir → Files → Modules →
+Fonts → Texts → RS232 → Oberon`, all clean.
 
 ## Remaining work (ordered)
 

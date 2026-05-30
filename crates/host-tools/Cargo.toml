@@ -11,10 +11,10 @@ description = "Host-side Oberon tools: text/archive converters, source extractor
 #   build-po-image - compile Project Oberon 2013 and assemble a bootable disk image
 #   build-eo-image - the Extended Oberon counterpart of build-po-image
 #   extract-source - extract the source tree from an Oberon disk image
-#   eo-driver      - boot an Oberon image headless and drive it (PCLink, clicks)
-#   eo-shim        - boot an InnerCore under the shim and run one command
-# Pure std except the image builders, eo-shim, and eo-driver, which run on the
-# risc-core CPU: the builders + eo-shim via the headless "shim" runtime
+#   eo-driver      - dev tool: boot an EO image headless, drive + observe it
+#   eo-inner-run   - dev tool: boot an InnerCore under the shim, run one command
+# Pure std except the image builders, eo-inner-run, and eo-driver, which run on the
+# risc-core CPU: the builders + eo-inner-run via the headless "shim" runtime
 # (src/shim.rs, a Rust port of project-norebo); eo-driver by booting the full system.
 #
 # The shared build pipeline lives in src/image.rs and the compile-order logic in

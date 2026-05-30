@@ -26,7 +26,7 @@ first `NEW` corrupted low memory and the PC eventually walked off into RAM
 (`PC left RAM (0x00800000)`). Switching the top to `Modules` (the standard EO boot
 body) fixed it outright; the `CoreLinker` fixups were already correct.
 
-Now working, all via `eo-shim` / `host_tools::shim`:
+Now working, all via `eo-inner-run` / `host_tools::shim`:
 - the `Modules`-topped inner core (23 KB) boots and dispatches commands (exit 0);
 - the EO compiler compiles a module headlessly (`ORP.Compile Foo.Mod/s` → `Foo.rsc`);
 - the ported `CoreLinker` re-links the inner core *in the shim*, byte-identical to
@@ -51,14 +51,15 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
 `eo-driver pointer+middle-click` · `eo-driver bidirectional PCLink` ·
 `eo-driver --push` · `EO Oberon stub` · `Oberon.Return (full toolchain compiles)` ·
 `CoreLinker port (compiles)` · `CoreLinker reads .rsc + links clean InnerCore` ·
-`shim→lib + eo-shim harness` · `shim PC-trace (OBERON_TRACE)` ·
+`shim→lib + eo-inner-run harness` · `shim PC-trace (OBERON_TRACE)` ·
 `build-eo-image + EO bootstrap seed (boot solved: Modules-top)` ·
 `build-eo-image → bootable Oberon.dsk (.rsx CoreLinker, shared resolve, round-trip)`.
 
-- **`extract-source`** (`src/bin/extract-source/`): `dsk.rs` auto-detects the FS
-  offset (raw `.dsk` at 0, full SD `RISC.img` at `0x10000400` = `0x80002` blocks).
+- **`extract-source`** (`src/bin/extract-source.rs`): the `dsk` reader
+  (`host_tools::dsk`, `src/dsk.rs`) auto-detects the FS offset (raw `.dsk` at 0, full
+  SD `RISC.img` at `0x10000400` = `0x80002` blocks).
   `--keep-objects` also extracts `.rsc`/`.smb` (seed harvesting).
-- **`eo-driver`** (`src/bin/eo-driver/`): the headless EO control plane. Flags:
+- **`eo-driver`** (`src/bin/eo-driver.rs`): host-side dev tool to boot, drive, and observe EO headless. Flags:
   `<image>`, `--frames N` (boot frames), `--after N` (post-input frames),
   `--fb-out f.pgm` (framebuffer dump), `--pclink-dir DIR` (PcLink serial backend),
   `--move-to X,Y` (screen px), `--mid-click` (Oberon execute), `--push HOSTFILE`
@@ -75,13 +76,13 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
 - **`host_tools::shim`** (`src/shim.rs`): the headless runtime, moved out of
   `build-po-image` into the lib so any inner core can be booted. `build-po-image` now
   uses `host_tools::shim::run`.
-- **`eo-shim`** (`src/bin/eo-shim/`): `eo-shim <DIR> <Module.Proc> [param…]` —
+- **`eo-inner-run`** (`src/bin/eo-inner-run.rs`): `eo-inner-run <DIR> <Module.Proc> [param…]` —
   boots `DIR/InnerCore` and runs one command. The bring-up harness.
 - **`assets/eo/bootstrap/`** — the vendored EO bootstrap seed: the `Modules`-topped
   `InnerCore` (23 KB) + the 14 glue-compiled toolchain `.rsc` (`Kernel`…`ORP`,
   `CoreLinker`). `build-eo-image` embeds these; `InnerCore` is the golden image the
   round-trip checks against.
-- **`build-eo-image`** (`src/bin/build-eo-image/`): `build-eo-image <sources> <out.dsk>`
+- **`build-eo-image`** (`src/bin/build-eo-image.rs`): `build-eo-image <sources> <out.dsk>`
   — the EO counterpart of `build-po-image`. Embeds the seed (glue + `VDisk` family), then
   mirrors `build-po-image`: compile the toolchain → link a fresh `Modules`-topped inner
   core → compile the *whole* EO source tree → `CoreLinker.LinkDisk` the boot core →
@@ -180,7 +181,7 @@ a way to size/trim the output image.
 
 ## Reproduction recipes (exact)
 
-Binaries: `cargo build --release -p host-tools` (eo-driver, eo-shim, build-eo-image,
+Binaries: `cargo build --release -p host-tools` (eo-driver, eo-inner-run, build-eo-image,
 build-po-image, extract-source, ob2unix). EO source as plain text:
 `target/debug/ob2unix <file>`.
 
@@ -195,11 +196,11 @@ target/release/risc /tmp/eo-out.dsk                          # ...or boot it in 
 The rebuilt disk boots to the EO desktop, framebuffer hash `0x1bed5d10ac9ec259` —
 identical to booting `$CLEAN` itself. Extract *without* `--keep-objects` (a clean
 `.Mod`+data tree); a stale `.smb`/`.rsc` in the tree would shadow the fresh build (see
-Gotchas). To compile/run ad-hoc EO commands headless, point `eo-shim` at any directory
+Gotchas). To compile/run ad-hoc EO commands headless, point `eo-inner-run` at any directory
 holding an `InnerCore` + the needed `.rsc` (e.g. the seed in `assets/eo/bootstrap/`).
 
 **Regenerating the seed.** Routine re-vendor (after a glue tweak) is easiest via the
-shim: recompile the changed glue against the current seed (`eo-shim assets/eo/bootstrap
+shim: recompile the changed glue against the current seed (`eo-inner-run assets/eo/bootstrap
 ORP.Compile X.Mod/s` → fresh `X.rsc`) and copy it into `assets/eo/bootstrap/`; a fresh
 `build-eo-image` run then re-derives + golden-checks the `InnerCore`. The from-scratch
 bootstrap below drives the *live* EO emulator instead — note it predates the `.rsx`
@@ -228,8 +229,8 @@ content line (`Oberon.Batch …`) is at **(685,280)**.
 
 **Boot test (direct):**
 ```
-target/release/eo-shim /tmp/eo-system Oberon.OpenLog          # → exit 0 (boots + dispatches)
-OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-left-RAM / budget
+target/release/eo-inner-run /tmp/eo-system Oberon.OpenLog          # → exit 0 (boots + dispatches)
+OBERON_TRACE=1 target/release/eo-inner-run /tmp/eo-system <cmd>    # → trace on PC-left-RAM / budget
 ```
 
 ---
@@ -242,7 +243,7 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
 - **Compile in ~5-module groups** *when driving live EO* (separate `ORP.Compile … ~`
   commands). `Oberon.Batch` GCs between commands; one giant `ORP.Compile` exhausts the
   desktop's heap → `RECURSIVE TRAP 4 in Texts` on the big `ORG`/`ORP`. Under the shim
-  this is moot — each `eo-shim`/`build-eo-image` `ORP.Compile` is a *fresh boot* with a
+  this is moot — each `eo-inner-run`/`build-eo-image` `ORP.Compile` is a *fresh boot* with a
   clean 7.5 MB heap — but `build-eo-image` keeps small groups anyway for safety.
 - **Stale `.smb` suppress fresh symbol files.** The compiler only *writes* `X.smb` when
   the export interface changed vs. an existing `X.smb` it can find on the search path.
@@ -270,7 +271,7 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
   `disk.rs:57` — the `0x80002` SD rebase.
 - `host_tools::shim` (`src/shim.rs`): syscall ABI; `trap` (~190) prints
   trap-type + module + pos (so boot crashes are debuggable).
-- `src/bin/build-eo-image/main.rs`: just the embedded EO `Seed` — `TOOLCHAIN`
+- `src/bin/build-eo-image.rs`: just the embedded EO `Seed` — `TOOLCHAIN`
   (glue + `VDisk` family + `eo/bootstrap` objects) + the golden `InnerCore` + the CLI.
   The pipeline (`build`, `NOREBO_MODULES`, the `.rsx`/link/install steps) lives in
   `host_tools::image`; compile order in `host_tools::resolve`. Both shared with
@@ -295,7 +296,9 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
   `VDisk` family + the FS format are shared (PO2013 ≡ EO `FileDir`/`Files`), so they
   port unchanged. Compile-order resolution lives in `host_tools::resolve` (shared).
 - **`build-eo-image` output is a bootable `Oberon.dsk`** (the EO desktop), like
-  `build-po-image`. For headless agent use, `eo-shim` runs commands against any
+  `build-po-image`. For ad-hoc headless runs, `eo-inner-run` runs commands against any
   `InnerCore`+objects directory (e.g. the vendored seed).
 - **Bootstrap via the scripted `eo-driver`** (drive the real EO emulator), not a
-  manual GUI session — it's the same control plane the on-EO agent will use.
+  manual GUI session — reproducible and scriptable. It's host-side scaffolding, not
+  the on-EO agent's interface: that agent is an Oberon module using EO's own internal
+  interfaces.

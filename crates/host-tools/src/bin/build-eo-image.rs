@@ -30,124 +30,115 @@ use host_tools::image::{self, Seed, PACKONLY_HELP};
 
 /// The embedded EO toolchain seed (vendored under `assets/`): the shared host glue
 /// (`assets/common`), the EO-specific glue (`assets/eo/glue`), and the prebuilt
-/// bootstrap objects + `Modules`-topped inner core (`assets/eo/bootstrap`) that
-/// seed the first build. Written flat to one scratch directory at runtime. Same
-/// shape as `build-po-image`'s seed — only the EO-specific glue and the bootstrap
-/// objects differ.
+/// bootstrap objects + `Modules`-topped inner core (`assets/eo/bootstrap`) that seed
+/// the first build. Written flat to one scratch directory at runtime.
 const TOOLCHAIN: &[(&str, &[u8])] = &[
     // Shared host glue (override the stock EO modules of the same name).
     (
         "Norebo.Mod",
-        include_bytes!("../../../assets/common/Norebo.Mod"),
+        include_bytes!("../../assets/common/Norebo.Mod"),
     ),
     (
         "FileDir.Mod",
-        include_bytes!("../../../assets/common/FileDir.Mod"),
+        include_bytes!("../../assets/common/FileDir.Mod"),
     ),
-    (
-        "Files.Mod",
-        include_bytes!("../../../assets/common/Files.Mod"),
-    ),
+    ("Files.Mod", include_bytes!("../../assets/common/Files.Mod")),
     // EO-specific glue.
     (
         "Kernel.Mod",
-        include_bytes!("../../../assets/eo/glue/Kernel.Mod"),
+        include_bytes!("../../assets/eo/glue/Kernel.Mod"),
     ),
     (
         "Oberon.Mod",
-        include_bytes!("../../../assets/eo/glue/Oberon.Mod"),
+        include_bytes!("../../assets/eo/glue/Oberon.Mod"),
     ),
     (
         "CoreLinker.Mod",
-        include_bytes!("../../../assets/eo/glue/CoreLinker.Mod"),
+        include_bytes!("../../assets/eo/glue/CoreLinker.Mod"),
     ),
     // The VDisk family (host-side virtual disk; shared with PO2013 — the on-disk
     // FS format is identical, and they compile against the EO glue unchanged).
-    (
-        "VDisk.Mod",
-        include_bytes!("../../../assets/common/VDisk.Mod"),
-    ),
+    ("VDisk.Mod", include_bytes!("../../assets/common/VDisk.Mod")),
     (
         "VFileDir.Mod",
-        include_bytes!("../../../assets/common/VFileDir.Mod"),
+        include_bytes!("../../assets/common/VFileDir.Mod"),
     ),
     (
         "VFiles.Mod",
-        include_bytes!("../../../assets/common/VFiles.Mod"),
+        include_bytes!("../../assets/common/VFiles.Mod"),
     ),
     (
         "VDiskUtil.Mod",
-        include_bytes!("../../../assets/common/VDiskUtil.Mod"),
+        include_bytes!("../../assets/common/VDiskUtil.Mod"),
     ),
-    // Prebuilt bootstrap inner core + objects (the shim boots/loads these to run
-    // the first compile + link). All glue-compiled; see assets/eo/bootstrap.
+    // Prebuilt bootstrap inner core + objects; all glue-compiled (see
+    // assets/eo/bootstrap).
     (
         "InnerCore",
-        include_bytes!("../../../assets/eo/bootstrap/InnerCore"),
+        include_bytes!("../../assets/eo/bootstrap/InnerCore"),
     ),
     (
         "Kernel.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Kernel.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Kernel.rsc"),
     ),
     (
         "FileDir.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/FileDir.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/FileDir.rsc"),
     ),
     (
         "Files.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Files.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Files.rsc"),
     ),
     (
         "Modules.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Modules.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Modules.rsc"),
     ),
     (
         "Norebo.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Norebo.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Norebo.rsc"),
     ),
     (
         "Oberon.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Oberon.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Oberon.rsc"),
     ),
     (
         "CoreLinker.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/CoreLinker.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/CoreLinker.rsc"),
     ),
     (
         "Fonts.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Fonts.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Fonts.rsc"),
     ),
     (
         "Texts.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/Texts.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/Texts.rsc"),
     ),
     (
         "RS232.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/RS232.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/RS232.rsc"),
     ),
     (
         "ORS.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/ORS.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/ORS.rsc"),
     ),
     (
         "ORB.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/ORB.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/ORB.rsc"),
     ),
     (
         "ORG.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/ORG.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/ORG.rsc"),
     ),
     (
         "ORP.rsc",
-        include_bytes!("../../../assets/eo/bootstrap/ORP.rsc"),
+        include_bytes!("../../assets/eo/bootstrap/ORP.rsc"),
     ),
 ];
 
 /// The golden bootstrap inner core: the fresh glue inner core re-linked during the
-/// build must reproduce it byte-for-byte (the EO compiler + `CoreLinker` are
-/// deterministic) — a self-consistency check on the embedded seed. Same bytes as
-/// the `InnerCore` toolchain entry above.
-const GOLDEN_INNER_CORE: &[u8] = include_bytes!("../../../assets/eo/bootstrap/InnerCore");
+/// build must reproduce it byte-for-byte — a self-consistency check on the seed.
+/// Same bytes as the `InnerCore` entry above.
+const GOLDEN_INNER_CORE: &[u8] = include_bytes!("../../assets/eo/bootstrap/InnerCore");
 
 const SEED: Seed = Seed {
     toolchain: TOOLCHAIN,

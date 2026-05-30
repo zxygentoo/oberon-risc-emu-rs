@@ -13,14 +13,19 @@ proper `--help`.
 | `extract-source` | extract a build-ready source tree from a disk image (drops .rsc/.smb)     | pure `std`  |
 | `build-po-image` | compile Project Oberon 2013 from sources and assemble a bootable disk     | `risc-core` |
 | `build-eo-image` | the Extended Oberon counterpart of `build-po-image`                       | `risc-core` |
-| `eo-driver`      | boot an Oberon image headless and drive it (pointer, clicks, PCLink)      | `risc-core` |
-| `eo-shim`        | boot an `InnerCore` under the shim and run one Oberon command             | `risc-core` |
+| `eo-driver`      | dev tool: boot an EO image headless, drive + observe it from host         | `risc-core` |
+| `eo-inner-run`   | dev tool: boot an `InnerCore` under the shim, run one Oberon command      | `risc-core` |
 
 The two image builders share their whole pipeline — compile a source tree against
 an embedded toolchain, link a fresh inner core, lay down a bootable `Oberon.dsk` —
 in [`host_tools::image`](src/image.rs); each binary differs only in its embedded
 seed and CLI. Compile-order resolution is shared in [`resolve`](src/resolve.rs),
 and the headless runtime in [`shim`](src/shim.rs).
+
+`eo-driver` and `eo-inner-run` are host-side **developer tools** for hacking on the
+EO bootstrap and the host toolchain — they build, boot, drive, and observe EO from
+*outside* the emulator. Nothing within Oberon uses them: an on-EO coding agent would
+be an Oberon module driving the system through EO's own interfaces.
 
 ## ob2unix
 
@@ -99,7 +104,7 @@ directory — the inverse of the image builders. It drops the compiled artifacts
 (`.rsc`/`.smb`, which the builders regenerate from source), so the output is a
 build-ready tree. It also writes the `.packonly` manifest the builders require,
 derived from which `.Mod` files carry a compiled object on the image. It reads the
-Oberon on-disk filesystem directly (see [`dsk.rs`](src/bin/extract-source/dsk.rs)),
+Oberon on-disk filesystem directly (see [`dsk.rs`](src/dsk.rs)),
 so it needs no emulator and no boot:
 
 ```sh
@@ -112,25 +117,27 @@ Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
 
 ## eo-driver
 
-A headless driver for a *full* Oberon image: boots it on the `risc-core` CPU with
-no window, drives it (move the pointer, middle-click to execute, push files over
-PCLink), and observes it (framebuffer hash, ink density, PGM dump, serial capture).
-It is the seed-regeneration tool for `build-eo-image` and the foundation for the
-on-EO control plane — see [`BUILD-EO-IMAGE.md`](BUILD-EO-IMAGE.md) for the flags
-and recipes.
+A host-side dev tool that drives a *full* Oberon image headless: it boots the image
+on the `risc-core` CPU with no window, drives it (move the pointer, middle-click to
+execute, push files over PCLink), and observes it (framebuffer hash, ink density,
+PGM dump, serial capture). Driving from outside is deliberately crude (scripted
+screen coordinates, file-push over PCLink); it's for *hacking on the bootstrap* —
+e.g. regenerating the `build-eo-image` seed — not a polished interface. See
+[`BUILD-EO-IMAGE.md`](BUILD-EO-IMAGE.md) for the flags and recipes.
 
 ```sh
 cargo run -p host-tools --release --bin eo-driver -- Oberon.dsk --frames 1000 --fb-out out.pgm
 ```
 
-## eo-shim
+## eo-inner-run
 
 Boots a directory's `InnerCore` under the headless [`shim`](src/shim.rs) and runs a
 single Oberon command — the bring-up harness for the EO toolchain core, and a handy
-way to run ad-hoc commands (or debug a boot with `OBERON_TRACE=1`):
+way to run ad-hoc commands against an inner core (or debug a boot with
+`OBERON_TRACE=1`):
 
 ```sh
-cargo run -p host-tools --release --bin eo-shim -- assets/eo/bootstrap ORP.Compile Foo.Mod/s
+cargo run -p host-tools --release --bin eo-inner-run -- assets/eo/bootstrap ORP.Compile Foo.Mod/s
 ```
 
 ## Tests

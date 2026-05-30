@@ -30,115 +30,108 @@ const TOOLCHAIN: &[(&str, &[u8])] = &[
     // Shared host glue.
     (
         "Norebo.Mod",
-        include_bytes!("../../../assets/common/Norebo.Mod"),
+        include_bytes!("../../assets/common/Norebo.Mod"),
     ),
     (
         "FileDir.Mod",
-        include_bytes!("../../../assets/common/FileDir.Mod"),
+        include_bytes!("../../assets/common/FileDir.Mod"),
     ),
-    (
-        "Files.Mod",
-        include_bytes!("../../../assets/common/Files.Mod"),
-    ),
+    ("Files.Mod", include_bytes!("../../assets/common/Files.Mod")),
     // PO2013-specific glue.
     (
         "Kernel.Mod",
-        include_bytes!("../../../assets/po/glue/Kernel.Mod"),
+        include_bytes!("../../assets/po/glue/Kernel.Mod"),
     ),
     (
         "Oberon.Mod",
-        include_bytes!("../../../assets/po/glue/Oberon.Mod"),
+        include_bytes!("../../assets/po/glue/Oberon.Mod"),
     ),
     (
         "CoreLinker.Mod",
-        include_bytes!("../../../assets/po/glue/CoreLinker.Mod"),
+        include_bytes!("../../assets/po/glue/CoreLinker.Mod"),
     ),
     // The VDisk family (host-side virtual disk; shared with EO).
-    (
-        "VDisk.Mod",
-        include_bytes!("../../../assets/common/VDisk.Mod"),
-    ),
+    ("VDisk.Mod", include_bytes!("../../assets/common/VDisk.Mod")),
     (
         "VFileDir.Mod",
-        include_bytes!("../../../assets/common/VFileDir.Mod"),
+        include_bytes!("../../assets/common/VFileDir.Mod"),
     ),
     (
         "VFiles.Mod",
-        include_bytes!("../../../assets/common/VFiles.Mod"),
+        include_bytes!("../../assets/common/VFiles.Mod"),
     ),
     (
         "VDiskUtil.Mod",
-        include_bytes!("../../../assets/common/VDiskUtil.Mod"),
+        include_bytes!("../../assets/common/VDiskUtil.Mod"),
     ),
     // Prebuilt bootstrap inner core + objects (the shim boots/loads these to run
     // the first compile + link).
     (
         "InnerCore",
-        include_bytes!("../../../assets/po/bootstrap/InnerCore"),
+        include_bytes!("../../assets/po/bootstrap/InnerCore"),
     ),
     (
         "Kernel.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Kernel.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Kernel.rsc"),
     ),
     (
         "FileDir.rsc",
-        include_bytes!("../../../assets/po/bootstrap/FileDir.rsc"),
+        include_bytes!("../../assets/po/bootstrap/FileDir.rsc"),
     ),
     (
         "Files.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Files.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Files.rsc"),
     ),
     (
         "Modules.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Modules.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Modules.rsc"),
     ),
     (
         "Norebo.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Norebo.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Norebo.rsc"),
     ),
     (
         "Oberon.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Oberon.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Oberon.rsc"),
     ),
     (
         "CoreLinker.rsc",
-        include_bytes!("../../../assets/po/bootstrap/CoreLinker.rsc"),
+        include_bytes!("../../assets/po/bootstrap/CoreLinker.rsc"),
     ),
     (
         "Fonts.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Fonts.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Fonts.rsc"),
     ),
     (
         "Texts.rsc",
-        include_bytes!("../../../assets/po/bootstrap/Texts.rsc"),
+        include_bytes!("../../assets/po/bootstrap/Texts.rsc"),
     ),
     (
         "RS232.rsc",
-        include_bytes!("../../../assets/po/bootstrap/RS232.rsc"),
+        include_bytes!("../../assets/po/bootstrap/RS232.rsc"),
     ),
     (
         "ORS.rsc",
-        include_bytes!("../../../assets/po/bootstrap/ORS.rsc"),
+        include_bytes!("../../assets/po/bootstrap/ORS.rsc"),
     ),
     (
         "ORB.rsc",
-        include_bytes!("../../../assets/po/bootstrap/ORB.rsc"),
+        include_bytes!("../../assets/po/bootstrap/ORB.rsc"),
     ),
     (
         "ORG.rsc",
-        include_bytes!("../../../assets/po/bootstrap/ORG.rsc"),
+        include_bytes!("../../assets/po/bootstrap/ORG.rsc"),
     ),
     (
         "ORP.rsc",
-        include_bytes!("../../../assets/po/bootstrap/ORP.rsc"),
+        include_bytes!("../../assets/po/bootstrap/ORP.rsc"),
     ),
 ];
 
 /// The committed golden inner core: the inner core re-linked during the build must
-/// reproduce it byte-for-byte (the compiler + `CoreLinker` are deterministic) — a
-/// self-consistency check on the embedded seed. Same bytes as the `InnerCore`
-/// toolchain entry above.
-const GOLDEN_INNER_CORE: &[u8] = include_bytes!("../../../assets/po/bootstrap/InnerCore");
+/// reproduce it byte-for-byte (compiler + `CoreLinker` are deterministic) — a
+/// self-consistency check on the seed. Same bytes as the `InnerCore` entry above.
+const GOLDEN_INNER_CORE: &[u8] = include_bytes!("../../assets/po/bootstrap/InnerCore");
 
 const SEED: Seed = Seed {
     toolchain: TOOLCHAIN,

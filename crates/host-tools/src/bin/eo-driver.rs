@@ -1,13 +1,16 @@
-//! `eo-driver` — a headless driver for the Extended Oberon system. The bootstrap
-//! mechanism for `build-eo-image` (and the eventual on-EO coding-agent control
-//! plane): boot EO with no windowing, drive it, and observe it from the host.
+//! `eo-driver` — a headless driver for a full Extended Oberon image, and a
+//! host-side developer tool for hacking on the EO bootstrap. It boots EO with no
+//! window on the `risc-core` CPU (deterministic 60 Hz synthetic clock), drives it
+//! from the host (move the pointer, middle-click to execute, push files over
+//! `PCLink`), and observes it (framebuffer hash/PGM dump, captured serial) — enough
+//! to build, boot, and watch EO headless, e.g. to regenerate the `build-eo-image`
+//! seed.
 //!
-//! Milestone 1 (this file): boot EO's `RISC.img` on the `risc-core` CPU, run it
-//! on the deterministic 60 Hz synthetic clock, attach a programmable serial line
-//! that captures everything EO transmits (and can feed it input), and report when
-//! the framebuffer settles — the sign the system has reached its desktop. Command
-//! injection (compile + `ORL.Link` over keyboard/mouse or a serial protocol) is
-//! the next milestone; see crates/host-tools/BUILD-EO-IMAGE.md.
+//! Driving is deliberately crude — scripted screen coordinates for a click, files
+//! pushed over `PCLink` — because it pokes the emulator from *outside*. It is not an
+//! interface used from within Oberon: an on-EO coding agent would run as an Oberon
+//! module and drive the system through EO's own internal interfaces, not this. See
+//! crates/host-tools/BUILD-EO-IMAGE.md.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;

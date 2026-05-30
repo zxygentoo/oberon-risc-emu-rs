@@ -27,8 +27,7 @@ use std::{fs, io};
 
 use clap::Parser;
 
-mod dsk;
-use dsk::Image;
+use host_tools::dsk::Image;
 
 /// The `.packonly` manifest section appended to `--help`.
 const PACKONLY_HELP: &str = "\

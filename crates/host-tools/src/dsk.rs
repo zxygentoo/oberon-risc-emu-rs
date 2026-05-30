@@ -19,7 +19,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use host_tools::name_char_ok;
+use crate::name_char_ok;
 
 // Constants from `FileDir.Mod`.
 const SECTOR_SIZE: usize = 1024;

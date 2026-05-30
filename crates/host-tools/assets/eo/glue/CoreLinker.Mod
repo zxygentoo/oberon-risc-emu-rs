@@ -39,7 +39,7 @@ MODULE CoreLinker;  (*offline linker for Extended Oberon, derived from EO Module
     WHILE name[i] # 0X DO filename[i] := name[i]; INC(i) END ;
     (*offline linker: read the renamed `.rsx` objects, so the freshly compiled
       modules being linked don't collide with the live `.rsc` the shim loads to
-      run this linker (matches the PO2013 norebo CoreLinker / build-image). The
+      run this linker (matches the PO2013 norebo CoreLinker / build-po-image). The
       build renames `.rsc`->`.rsx` around each link call.*)
     filename[i] := "."; filename[i+1] := "r"; filename[i+2] := "s"; filename[i+3] := "x"; filename[i+4] := 0X;
     RETURN Files.Old(filename)

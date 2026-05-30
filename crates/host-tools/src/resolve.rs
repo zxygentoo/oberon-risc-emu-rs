@@ -1,4 +1,4 @@
-//! Decide which files in a source tree `build-image` compiles, and in what order.
+//! Decide which files in a source tree the image builders compile, and in what order.
 //!
 //! The rule is deliberately simple and unambiguous: every file is compiled as
 //! Oberon source *except* those named in the tree's `.packonly` manifest, which

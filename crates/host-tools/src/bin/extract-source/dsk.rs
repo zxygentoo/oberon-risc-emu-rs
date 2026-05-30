@@ -3,7 +3,7 @@
 //! parses the directory B-tree and reconstructs file contents straight from the
 //! image bytes; no emulator, no boot.
 //!
-//! Layout (see `assets/Norebo/VFileDir.Mod`): the image is a flat array of
+//! Layout (see `assets/common/VFileDir.Mod`): the image is a flat array of
 //! 1024-byte sectors, with sector `s` at byte offset `(s - 1) * 1024` and on-disk
 //! pointers stored as `DiskAdr = s * 29`. The directory is a B-tree rooted at
 //! `DiskAdr` 29 (sector 1); each file's first sector is a header holding its name,

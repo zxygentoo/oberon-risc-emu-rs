@@ -1,5 +1,5 @@
-//! End-to-end tests for the `ob2unix`, `asciidecoder`, `build-image`, and
-//! `extract-source` binaries.
+//! End-to-end tests for the `ob2unix`, `asciidecoder`, `extract-source`,
+//! `build-po-image`, and `build-eo-image` binaries.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use risc_core::risc::Risc;
 const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
 const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
 const EXTRACT_SOURCE: &str = env!("CARGO_BIN_EXE_extract-source");
-const BUILD_IMAGE: &str = env!("CARGO_BIN_EXE_build-image");
+const BUILD_PO_IMAGE: &str = env!("CARGO_BIN_EXE_build-po-image");
 const BUILD_EO_IMAGE: &str = env!("CARGO_BIN_EXE_build-eo-image");
 
 /// Run `bin` with `args`, feed `input` on stdin, and capture its output.
@@ -190,7 +190,7 @@ fn asciidecoder_rejects_unknown_flag() {
 // `.packonly`, then rebuild) and checks the rebuild boots identically.
 #[test]
 #[ignore = "compiles all of Oberon via the shim; run with --ignored"]
-fn build_image_round_trips_the_golden() {
+fn build_po_image_round_trips_the_golden() {
     let Some(img) = golden_image() else {
         eprintln!("golden image not present; skipping round-trip test");
         return;
@@ -210,12 +210,12 @@ fn build_image_round_trips_the_golden() {
 
     let dst = scratch_dir("round-trip-build");
     let dsk = dst.join("Oberon.dsk");
-    let status = Command::new(BUILD_IMAGE)
+    let status = Command::new(BUILD_PO_IMAGE)
         .arg(&src)
         .arg(&dsk)
         .status()
-        .expect("spawn build-image");
-    assert!(status.success(), "build-image failed");
+        .expect("spawn build-po-image");
+    assert!(status.success(), "build-po-image failed");
 
     // The boot hashes come from the running machine (modules load by name, not by
     // disk layout), so the rebuild must boot to the C-derived golden even though
@@ -295,15 +295,15 @@ fn extract_source_yields_a_build_ready_tree() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `build-image` rejects a tree with no `.packonly` (it's required), failing fast
-/// — before the heavy toolchain build — with a clear message.
+/// `build-po-image` rejects a tree with no `.packonly` (it's required), failing
+/// fast — before the heavy toolchain build — with a clear message.
 #[test]
-fn build_image_requires_a_packonly() {
+fn build_po_image_requires_a_packonly() {
     let dir = scratch_dir("bi-no-packonly");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Foo.Mod"), b"MODULE Foo; END Foo.").unwrap();
     let out = run(
-        BUILD_IMAGE,
+        BUILD_PO_IMAGE,
         &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
         b"",
     );
@@ -319,13 +319,13 @@ fn build_image_requires_a_packonly() {
 /// A non-source file left off `.packonly` is a compile candidate, so the build
 /// fails clearly and points back at `.packonly` rather than feeding it to ORP.
 #[test]
-fn build_image_rejects_unlisted_non_source() {
+fn build_po_image_rejects_unlisted_non_source() {
     let dir = scratch_dir("bi-unlisted-data");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(".packonly"), b"").unwrap(); // nothing pack-only...
     std::fs::write(dir.join("Logo.Fnt"), [0u8, 1, 2, 3]).unwrap(); // ...but this is data
     let out = run(
-        BUILD_IMAGE,
+        BUILD_PO_IMAGE,
         &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
         b"",
     );
@@ -341,14 +341,14 @@ fn build_image_rejects_unlisted_non_source() {
 /// Two candidates that declare the same module collide (the forgotten-skip-entry
 /// backstop), and the build says so instead of silently clobbering one object.
 #[test]
-fn build_image_reports_a_duplicate_module() {
+fn build_po_image_reports_a_duplicate_module() {
     let dir = scratch_dir("bi-dup-module");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(".packonly"), b"").unwrap();
     std::fs::write(dir.join("A.Mod"), b"MODULE Same; END Same.").unwrap();
     std::fs::write(dir.join("B.Mod"), b"MODULE Same; END Same.").unwrap();
     let out = run(
-        BUILD_IMAGE,
+        BUILD_PO_IMAGE,
         &[dir.to_str().unwrap(), dir.join("out.dsk").to_str().unwrap()],
         b"",
     );
@@ -365,9 +365,9 @@ fn build_image_reports_a_duplicate_module() {
 
 /// Copy the committed EO bootstrap seed (`InnerCore` + glue `.rsc`) into `dir`.
 fn stage_eo_seed(dir: &Path) -> PathBuf {
-    let seed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/eo-Bootstrap");
+    let seed = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/eo/bootstrap");
     std::fs::create_dir_all(dir).unwrap();
-    for entry in std::fs::read_dir(&seed).expect("eo-Bootstrap seed present") {
+    for entry in std::fs::read_dir(&seed).expect("eo/bootstrap seed present") {
         let p = entry.unwrap().path();
         std::fs::copy(&p, dir.join(p.file_name().unwrap())).unwrap();
     }

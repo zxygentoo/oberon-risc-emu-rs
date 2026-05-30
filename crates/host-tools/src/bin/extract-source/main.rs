@@ -1,10 +1,10 @@
 //! `extract-source` — extract the source files from a Project Oberon `.dsk`
 //! image into a host directory: every file *except* the compiled artifacts
-//! (`.rsc` object code and `.smb` symbol files), which `build-image` regenerates
-//! from source anyway. The result is a build-ready tree — edit it and feed it
-//! straight back to [`build-image`](../build-image).
+//! (`.rsc` object code and `.smb` symbol files), which the image builders
+//! regenerate from source anyway. The result is a build-ready tree — edit it and
+//! feed it straight back to [`build-po-image`](../build-po-image) (or `build-eo-image`).
 //!
-//! It also writes the `.packonly` manifest `build-image` requires, derived from
+//! It also writes the `.packonly` manifest the builders require, derived from
 //! the image: a source `X.Mod` is a compile candidate when the image carries its
 //! `X.rsc` object, and every other extracted file (data, plus reference modules
 //! that ship as source with no object) is recorded as pack-only.
@@ -33,14 +33,14 @@ use dsk::Image;
 /// The `.packonly` manifest section appended to `--help`.
 const PACKONLY_HELP: &str = "\
 The .packonly manifest:
-  extract-source also writes `.packonly` into OUTPUT_DIR: the manifest build-image
-  uses to tell source from data. A source X.Mod is a compile candidate when the
+  extract-source also writes `.packonly` into OUTPUT_DIR: the manifest the
+  builders use to tell source from data. A source X.Mod is a compile candidate when the
   image carries its X.rsc object; every other extracted file (data, and reference
   modules shipped as source with no object) is recorded as pack-only.
 
   One file name per line; blank lines and `#` comments are ignored; an empty list
-  means build-image compiles everything. The tree feeds straight back into
-  build-image.";
+  means the builders compile everything. The tree feeds straight back into
+  build-po-image (or build-eo-image).";
 
 /// Extract the source files from a Project Oberon `.dsk` image.
 ///
@@ -61,7 +61,7 @@ struct Cli {
     /// Also extract compiled objects (`.rsc`) and symbol files (`.smb`), which are
     /// skipped by default. Use this to harvest a toolchain *seed* from a prebuilt
     /// image (e.g. Extended Oberon's `RISC.img`). The result is seed material, not
-    /// a tree to feed back into build-image — kept objects would shadow a rebuild.
+    /// a tree to feed back into the builders — kept objects would shadow a rebuild.
     #[arg(long)]
     keep_objects: bool,
 }
@@ -74,7 +74,7 @@ fn main() {
     }
 }
 
-/// A compiled artifact that `build-image` regenerates from source — and that, if
+/// A compiled artifact that the image builders regenerate from source — and that, if
 /// kept, shadows the freshly built one and breaks a rebuild — so we skip it.
 fn is_compiled(name: &str) -> bool {
     matches!(
@@ -125,7 +125,7 @@ fn run(cli: &Cli) -> io::Result<()> {
         }
     }
 
-    // The manifest is required by build-image and always regenerated, so the tree
+    // The manifest is required by the builders and always regenerated, so the tree
     // is build-ready as-is (an empty list — every module compiled — still writes).
     fs::write(
         cli.output.join(".packonly"),

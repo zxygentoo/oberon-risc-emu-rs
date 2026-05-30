@@ -2,7 +2,7 @@
 
 **Goal:** a headless `build-eo-image` host tool that compiles an **Extended Oberon**
 (EO — Pirklbauer's "Oberon-2 2020 Edition", system `AP 1.1.26`) disk image from
-source, the way `build-image` does for Project Oberon 2013.
+source, the way `build-po-image` does for Project Oberon 2013.
 
 **Why:** run a coding agent *on* EO, whose `Modules` has safe module unloading +
 finalization (`final`/`badfin`) — the memory-safety property stock PO2013 lacks.
@@ -33,13 +33,13 @@ Now working, all via `eo-shim` / `host_tools::shim`:
   the live-EO link (the golden round-trip property);
 - a freshly compiled command runs and its output reaches the host.
 
-**`build-eo-image <sources> <out.dsk>` is complete** — the EO peer of `build-image`.
+**`build-eo-image <sources> <out.dsk>` is complete** — the EO peer of `build-po-image`.
 From an Extended Oberon source tree it compiles the EO toolchain in the shim, links a
 fresh inner core, compiles the *whole* EO system, and assembles a **bootable
 `Oberon.dsk`**. The result boots to the full EO desktop in the emulator, byte-for-byte
 identical to the original image's boot (`risc Oberon.dsk` for the GUI; the round-trip
 test boots both headless and compares framebuffer hashes). The pipeline is now shared
-with `build-image` (same `NOREBO_MODULES`, `.rsx` rename, `CoreLinker.LinkDisk` +
+with `build-po-image` (same `NOREBO_MODULES`, `.rsx` rename, `CoreLinker.LinkDisk` +
 `VDiskUtil.InstallFiles`); the only EO specifics are the embedded glue seed and the
 `Modules`-top inner core.
 
@@ -65,34 +65,35 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
   (repeatable; PCLink-push after the click). Verified: boots EO to desktop;
   middle-click executes commands; bidirectional byte-accurate PCLink; multi-file
   push.
-- **`assets/eo-norebo/`** — EO host glue, all compile clean under EO:
+- **`assets/eo/glue/`** — EO host glue, all compile clean under EO:
   `Kernel.Mod` (EO Kernel + `Trap→Norebo.Trap`), `Disk.Mod` (EO Disk minus SD/SPI;
   `Get/PutSector` abort), `Oberon.Mod` (norebo stub adapted: GC→`Kernel.Collect`+
   `Modules.Collect`, 4-arg `Kernel.New`, `mod.prg`, added `Oberon.Return`),
   `CoreLinker.Mod` (EO object-format offline linker — see below).
-  Shared from **`assets/Norebo/`** unchanged: `Norebo.Mod`, `FileDir.Mod`,
+  Shared from **`assets/common/`** unchanged: `Norebo.Mod`, `FileDir.Mod`,
   `Files.Mod` (host-backed, work as-is for EO).
 - **`host_tools::shim`** (`src/shim.rs`): the headless runtime, moved out of
-  `build-image` into the lib so any inner core can be booted. `build-image` now
+  `build-po-image` into the lib so any inner core can be booted. `build-po-image` now
   uses `host_tools::shim::run`.
 - **`eo-shim`** (`src/bin/eo-shim/`): `eo-shim <DIR> <Module.Proc> [param…]` —
   boots `DIR/InnerCore` and runs one command. The bring-up harness.
-- **`assets/eo-Bootstrap/`** — the vendored EO bootstrap seed: the `Modules`-topped
+- **`assets/eo/bootstrap/`** — the vendored EO bootstrap seed: the `Modules`-topped
   `InnerCore` (23 KB) + the 14 glue-compiled toolchain `.rsc` (`Kernel`…`ORP`,
   `CoreLinker`). `build-eo-image` embeds these; `InnerCore` is the golden image the
   round-trip checks against.
 - **`build-eo-image`** (`src/bin/build-eo-image/`): `build-eo-image <sources> <out.dsk>`
-  — the EO counterpart of `build-image`. Embeds the seed (glue + `VDisk` family), then
-  mirrors `build-image`: compile the toolchain → link a fresh `Modules`-topped inner
+  — the EO counterpart of `build-po-image`. Embeds the seed (glue + `VDisk` family), then
+  mirrors `build-po-image`: compile the toolchain → link a fresh `Modules`-topped inner
   core → compile the *whole* EO source tree → `CoreLinker.LinkDisk` the boot core →
-  `VDiskUtil.InstallFiles`, producing a **bootable `Oberon.dsk`**. The shared pipeline
-  lives in `host_tools::resolve` (compile-order) + the per-binary `build()`.
+  `VDiskUtil.InstallFiles`, producing a **bootable `Oberon.dsk`**. The whole pipeline
+  is shared in `host_tools::image` (compile→link→install) + `host_tools::resolve`
+  (compile-order); each binary is just its embedded `Seed` and CLI.
 - **`risc-core` PC-trace** (`src/risc.rs` `shim_run`): set `OBERON_TRACE=1` to dump
   the instruction count, a ring of the last instructions, and the registers when a run
   leaves RAM / exhausts its budget — plus a trip-wire on executing a zero word (a wild
   branch into zeroed memory). Zero-cost when unset.
 
-The PO2013 `build-image` + its golden round-trip test (`#[ignore]`) are untouched and
+The PO2013 `build-po-image` + its golden round-trip test (`#[ignore]`) are untouched and
 green (the `resolve` move is import-only). EO tests: `eo_seed_boots_compiles_and_runs`
 (hermetic — the committed seed boots, compiles `Tiny`, runs it) and
 `build_eo_image_round_trips_a_bootable_desktop` (`#[ignore]`, needs `EO_IMAGE`: extract
@@ -102,7 +103,7 @@ green (the `resolve` move is import-only). EO tests: `eo_seed_boots_compiles_and
 
 ## The EO `CoreLinker` (the hard part — done, validated)
 
-`assets/eo-norebo/CoreLinker.Mod` is EO's `Modules.Load` reading/fixup logic ported
+`assets/eo/glue/CoreLinker.Mod` is EO's `Modules.Load` reading/fixup logic ported
 onto PO2013 norebo `CoreLinker`'s buffer/relative-address structure. EO deltas vs
 PO2013, all handled:
 - descriptor `ImageModDesc`: 9 addr fields `var/str/tdx/prg/imp/cmd/ent/ptr/pvr` +
@@ -145,7 +146,7 @@ branched into zeroed RAM (`PC left RAM (0x00800000)`).
 PO2013, and `Oberon` + the runtime load dynamically — so the core is small (23 KB) and
 the boot directory must also carry the dynamically-loaded `.rsc` (`Oberon`, `RS232`,
 `Texts`, `Fonts`, and whatever the command pulls in). This is the same model
-`build-image` uses; `build-eo-image` (below) wires it all up.
+`build-po-image` uses; `build-eo-image` (below) wires it all up.
 
 Confirmed empirically with the env-gated PC-trace (`OBERON_TRACE=1`, in `shim_run`):
 the `Oberon`-top core ran ~1M instructions of confused execution (SP clobbered to
@@ -155,7 +156,7 @@ boots, dispatches, and exits cleanly (0 success, 3 `badkey`, 6 `nocmd` — all r
 
 ## DONE: the bootable disk (`build-eo-image`)
 
-The GUI-bootable `.dsk` is built exactly like `build-image`'s, not via EO's
+The GUI-bootable `.dsk` is built exactly like `build-po-image`'s, not via EO's
 `ORL`/`Disk`-sector path: the boot core is written with **`CoreLinker.LinkDisk`** and
 the filesystem with **`VDiskUtil.InstallFiles`**, both running in the shim on a host
 file. This works for EO because the on-disk FS format is shared (`FileDir.Mod`/
@@ -163,7 +164,7 @@ file. This works for EO because the on-disk FS format is shared (`FileDir.Mod`/
 glue **unchanged** and produces an EO-readable disk; and the inner core boots via the
 same `Modules`-top mechanism whether the ROM loads it from disk or the shim sets `PC=0`
 (the ROM PROM is shared RISC5 hardware). So `build-eo-image` is structurally identical
-to `build-image` — the realisation that closed the gap.
+to `build-po-image` — the realisation that closed the gap.
 
 Round-trip, validated: extract a pristine EO image's sources → `build-eo-image` → the
 rebuilt `Oberon.dsk` boots to the **same** EO desktop as the original, framebuffer
@@ -180,7 +181,7 @@ a way to size/trim the output image.
 ## Reproduction recipes (exact)
 
 Binaries: `cargo build --release -p host-tools` (eo-driver, eo-shim, build-eo-image,
-build-image, extract-source, ob2unix). EO source as plain text:
+build-po-image, extract-source, ob2unix). EO source as plain text:
 `target/debug/ob2unix <file>`.
 
 **Round-trip — extract → build → boot (~4 s build):**
@@ -195,11 +196,11 @@ The rebuilt disk boots to the EO desktop, framebuffer hash `0x1bed5d10ac9ec259` 
 identical to booting `$CLEAN` itself. Extract *without* `--keep-objects` (a clean
 `.Mod`+data tree); a stale `.smb`/`.rsc` in the tree would shadow the fresh build (see
 Gotchas). To compile/run ad-hoc EO commands headless, point `eo-shim` at any directory
-holding an `InnerCore` + the needed `.rsc` (e.g. the seed in `assets/eo-Bootstrap/`).
+holding an `InnerCore` + the needed `.rsc` (e.g. the seed in `assets/eo/bootstrap/`).
 
 **Regenerating the seed.** Routine re-vendor (after a glue tweak) is easiest via the
-shim: recompile the changed glue against the current seed (`eo-shim assets/eo-Bootstrap
-ORP.Compile X.Mod/s` → fresh `X.rsc`) and copy it into `assets/eo-Bootstrap/`; a fresh
+shim: recompile the changed glue against the current seed (`eo-shim assets/eo/bootstrap
+ORP.Compile X.Mod/s` → fresh `X.rsc`) and copy it into `assets/eo/bootstrap/`; a fresh
 `build-eo-image` run then re-derives + golden-checks the `InnerCore`. The from-scratch
 bootstrap below drives the *live* EO emulator instead — note it predates the `.rsx`
 `CoreLinker`, so its `CoreLinker` reads `.rsc` (the live system's own objects) and its
@@ -211,15 +212,15 @@ CLEAN=$(find /tmp/eo-clean -iname RISC.img | head -1)     # EO AP 1.1.26; or unt
 printf 'Oberon.Batch  ORP.Compile CoreLinker.Mod/s ~  ORP.Compile Norebo.Mod/s Kernel.Mod/s Disk.Mod/s FileDir.Mod/s Files.Mod/s ~  ORP.Compile Modules.Mod/s Fonts.Mod/s Texts.Mod/s RS232.Mod/s Oberon.Mod/s ~  ORP.Compile ORS.Mod/s ORB.Mod/s ~  ORP.Compile ORG.Mod/s ~  ORP.Compile ORP.Mod/s ~  CoreLinker.LinkSerial Modules InnerCore ~  ORP.Compile CoreLinker.Mod/s ~  System.ShowModules ~\r' > /tmp/eo-build/System.Tool
 cp "$CLEAN" /tmp/eo-work.img; rm -rf /tmp/eo-xfer && mkdir -p /tmp/eo-xfer
 target/release/eo-driver /tmp/eo-work.img --frames 800 --pclink-dir /tmp/eo-xfer --move-to 685,552 --mid-click \
-  --push crates/host-tools/assets/Norebo/Norebo.Mod --push crates/host-tools/assets/eo-norebo/Kernel.Mod \
-  --push crates/host-tools/assets/eo-norebo/Disk.Mod --push crates/host-tools/assets/Norebo/FileDir.Mod \
-  --push crates/host-tools/assets/Norebo/Files.Mod --push crates/host-tools/assets/eo-norebo/Oberon.Mod \
-  --push crates/host-tools/assets/eo-norebo/CoreLinker.Mod --push /tmp/eo-build/System.Tool --after 500
+  --push crates/host-tools/assets/common/Norebo.Mod --push crates/host-tools/assets/eo/glue/Kernel.Mod \
+  --push crates/host-tools/assets/eo/glue/Disk.Mod --push crates/host-tools/assets/common/FileDir.Mod \
+  --push crates/host-tools/assets/common/Files.Mod --push crates/host-tools/assets/eo/glue/Oberon.Mod \
+  --push crates/host-tools/assets/eo/glue/CoreLinker.Mod --push /tmp/eo-build/System.Tool --after 500
 target/release/eo-driver /tmp/eo-work.img --frames 800 --move-to 685,280 --mid-click --after 80000 --fb-out /tmp/eo.pgm
 python3 -c "from PIL import Image; Image.open('/tmp/eo.pgm').save('/tmp/eo.png')"   # read /tmp/eo.png to see the log
 rm -rf /tmp/eo-ls && cargo run -q -p host-tools --bin extract-source -- --keep-objects /tmp/eo-work.img /tmp/eo-ls
-cp /tmp/eo-ls/InnerCore crates/host-tools/assets/eo-Bootstrap/
-for m in Kernel FileDir Files Modules Norebo Oberon CoreLinker Fonts Texts RS232 ORS ORB ORG ORP; do cp /tmp/eo-ls/$m.rsc crates/host-tools/assets/eo-Bootstrap/; done
+cp /tmp/eo-ls/InnerCore crates/host-tools/assets/eo/bootstrap/
+for m in Kernel FileDir Files Modules Norebo Oberon CoreLinker Fonts Texts RS232 ORS ORB ORG ORP; do cp /tmp/eo-ls/$m.rsc crates/host-tools/assets/eo/bootstrap/; done
 ```
 **Click coords (deterministic):** on EO's *original* System.Tool after a clean boot,
 `PCLink1.Run` is at screen **(685,552)**; in our pushed minimal System.Tool the first
@@ -269,9 +270,11 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
   `disk.rs:57` — the `0x80002` SD rebase.
 - `host_tools::shim` (`src/shim.rs`): syscall ABI; `trap` (~190) prints
   trap-type + module + pos (so boot crashes are debuggable).
-- `src/bin/build-eo-image/main.rs`: the EO disk pipeline — `TOOLCHAIN` (embedded glue +
-  `VDisk` family + `eo-Bootstrap` objects), `NOREBO_MODULES`, `build()`. Compile order
-  comes from `host_tools::resolve` (shared with `build-image`).
+- `src/bin/build-eo-image/main.rs`: just the embedded EO `Seed` — `TOOLCHAIN`
+  (glue + `VDisk` family + `eo/bootstrap` objects) + the golden `InnerCore` + the CLI.
+  The pipeline (`build`, `NOREBO_MODULES`, the `.rsx`/link/install steps) lives in
+  `host_tools::image`; compile order in `host_tools::resolve`. Both shared with
+  `build-po-image`.
 - EO reference sources (ob2unix'd, regenerate with `target/debug/ob2unix`):
   `/tmp/eo-txt/{Modules,Kernel,Disk,Files,FileDir,Oberon}.Mod`. EO's `Modules.Load`
   (`/tmp/eo-txt/Modules.Mod` ~56–220) is the fixup/format reference for `CoreLinker`.
@@ -287,12 +290,12 @@ OBERON_TRACE=1 target/release/eo-shim /tmp/eo-system <cmd>    # → trace on PC-
   `(len,addr,bytes)` serial core; the disk boot core is the `LinkDisk` format the shared
   RISC5 PROM loads. Both link `Modules`-top, so both boot the same way. (EO's own
   `ORL.Link`/`ORL.Load` would need a shim disk-sector backend — a possible follow-up.)
-- **`build-eo-image` is structurally `build-image` with a different seed.** Same
+- **`build-eo-image` is structurally `build-po-image` with a different seed.** Same
   `NOREBO_MODULES`, `.rsx` rename, `CoreLinker.LinkDisk` + `VDiskUtil.InstallFiles`. The
   `VDisk` family + the FS format are shared (PO2013 ≡ EO `FileDir`/`Files`), so they
   port unchanged. Compile-order resolution lives in `host_tools::resolve` (shared).
 - **`build-eo-image` output is a bootable `Oberon.dsk`** (the EO desktop), like
-  `build-image`. For headless agent use, `eo-shim` runs commands against any
+  `build-po-image`. For headless agent use, `eo-shim` runs commands against any
   `InnerCore`+objects directory (e.g. the vendored seed).
 - **Bootstrap via the scripted `eo-driver`** (drive the real EO emulator), not a
   manual GUI session — it's the same control plane the on-EO agent will use.

@@ -1,19 +1,26 @@
 //! Shared host-side helpers for working with Project Oberon artifacts.
 //!
-//! The tools in this crate are separate `src/bin/` programs and deliberately
-//! share little, but a few low-level Oberon rules must agree across them. Those
-//! live here so there is a single source of truth (and one set of tests) rather
-//! than a copy per binary that can quietly drift.
+//! The tools in this crate are separate `src/bin/` programs, but the heavy lifting
+//! they have in common lives here, so there is a single source of truth (and one
+//! set of tests) rather than a copy per binary that can quietly drift: the headless
+//! [`shim`] runtime, the compile-order [`resolve`]r, the disk-[`image`] build
+//! pipeline, and the handful of low-level Oberon rules below. What stays per-binary
+//! is just the embedded toolchain seed and the CLI.
 
 /// The headless `shim` runtime: boots an inner-core image on the `risc-core` CPU
 /// and maps Oberon's `Kernel`/`Files` operations onto the host (a Rust port of
-/// project-norebo). Used by `build-image`, the EO bring-up, and `build-eo-image`.
+/// project-norebo). Used by the image builders, the EO bring-up, and `eo-shim`.
 pub mod shim;
 
 /// Decide which files of a source tree to compile (everything not in `.packonly`)
 /// and in what order (topological sort of their `IMPORT` lists). Shared by
-/// `build-image` and `build-eo-image`, which compile a whole Oberon source tree.
+/// `build-po-image` and `build-eo-image`, which compile a whole Oberon source tree.
 pub mod resolve;
+
+/// The disk-image build pipeline shared by `build-po-image` and `build-eo-image`:
+/// compile a source tree against an embedded toolchain, link a fresh inner core,
+/// and assemble a bootable `Oberon.dsk`. Each binary supplies only its [`image::Seed`].
+pub mod image;
 
 /// Whether byte `ch` is legal at 0-based position `i` of a Project Oberon file
 /// name: a leading ASCII letter, then letters, digits, or `.` (the `FileDir.Mod`
@@ -26,12 +33,12 @@ pub fn name_char_ok(i: usize, ch: u8) -> bool {
     ch.is_ascii_alphabetic() || (i > 0 && (ch == b'.' || ch.is_ascii_digit()))
 }
 
-/// The `.packonly` manifest that travels with a source tree: the files
-/// `build-image` packs into the image verbatim rather than compiling. Everything
+/// The `.packonly` manifest that travels with a source tree: the files the image
+/// builders pack into the image verbatim rather than compiling. Everything
 /// *not* listed is treated as Oberon source and compiled — so the list is the
 /// single, unambiguous record of "don't compile this", which the compiler itself
-/// cannot infer (`ORP.Compile` will happily try to parse a font). `build-image`
-/// reads it; `extract-source` writes it. Both go through here so the format can't
+/// cannot infer (`ORP.Compile` will happily try to parse a font). The builders
+/// read it; `extract-source` writes it. Both go through here so the format can't
 /// drift.
 ///
 /// Format: one file name per line; blank lines and `#` comments are ignored. A

@@ -1,4 +1,4 @@
-//! End-to-end tests for the `ob2unix`, `asciidecoder`, `extract-source`,
+//! End-to-end tests for the `ob2txt`, `txt2ob`, `extract-source`,
 //! `build-po-image`, and `build-eo-image` binaries.
 
 use std::io::Write;
@@ -9,8 +9,8 @@ use risc_core::disk::Disk;
 use risc_core::headless;
 use risc_core::risc::Risc;
 
-const OB2UNIX: &str = env!("CARGO_BIN_EXE_ob2unix");
-const ASCIIDECODER: &str = env!("CARGO_BIN_EXE_asciidecoder");
+const OB2TXT: &str = env!("CARGO_BIN_EXE_ob2txt");
+const TXT2OB: &str = env!("CARGO_BIN_EXE_txt2ob");
 const EXTRACT_SOURCE: &str = env!("CARGO_BIN_EXE_extract-source");
 const BUILD_PO_IMAGE: &str = env!("CARGO_BIN_EXE_build-po-image");
 const BUILD_EO_IMAGE: &str = env!("CARGO_BIN_EXE_build-eo-image");
@@ -40,148 +40,79 @@ fn scratch_dir(name: &str) -> PathBuf {
     dir
 }
 
-// Build an Oberon Text: magic 0xF0 0x01, then a little-endian header length,
-// then the body. `header_len` counts the whole header, including these 6 bytes.
-fn oberon_text(header_len: u32, body: &[u8]) -> Vec<u8> {
-    let mut v = vec![
-        0xF0,
-        0x01,
-        header_len as u8,
-        (header_len >> 8) as u8,
-        (header_len >> 16) as u8,
-        (header_len >> 24) as u8,
-    ];
-    v.resize(header_len as usize, 0);
-    v.extend_from_slice(body);
-    v
-}
-
-/// Write `bytes` to a uniquely named file under the test target dir and return
-/// its path. `ob2unix` takes the text to convert as a FILE argument.
-fn input_file(name: &str, bytes: &[u8]) -> PathBuf {
-    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
-    std::fs::write(&path, bytes).expect("failed to write input file");
-    path
-}
-
+/// `ob2txt FILE` writes `FILE.txt` (CR->LF, Latin-1->UTF-8); `txt2ob FILE.txt`
+/// reverses it back to `FILE`. The pair must round-trip plain Oberon source
+/// (ASCII + CR) byte-for-byte.
 #[test]
-fn ob2unix_converts_oberon_text() {
-    let f = input_file("ob2unix_convert.bin", &oberon_text(8, b"A\rB\rC"));
-    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
-    assert!(out.status.success());
-    assert_eq!(out.stdout, b"A\nB\nC");
-}
+fn ob2txt_then_txt2ob_round_trips() {
+    let dir = scratch_dir("ob2txt-roundtrip");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("A.Mod");
+    let original = b"MODULE A;\r  IMPORT B;\rEND A.\r";
+    std::fs::write(&src, original).unwrap();
 
-#[test]
-fn ob2unix_converts_body_larger_than_buffer() {
-    // 3000 > the 1024-byte internal buffer, so the read/convert loop iterates.
-    let f = input_file("ob2unix_large.bin", &oberon_text(6, &vec![b'\r'; 3000]));
-    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
-    assert!(out.status.success());
-    assert_eq!(out.stdout, vec![b'\n'; 3000]);
-}
-
-#[test]
-fn ob2unix_passes_through_non_oberon_file() {
-    // No Oberon magic: copied verbatim, CR kept.
-    let f = input_file("ob2unix_plain.bin", b"plain\r text");
-    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
-    assert!(out.status.success());
-    assert_eq!(out.stdout, b"plain\r text");
-}
-
-#[test]
-fn ob2unix_handles_empty_file() {
-    let f = input_file("ob2unix_empty.bin", b"");
-    let out = run(OB2UNIX, &[f.to_str().unwrap()], b"");
-    assert!(out.status.success());
-    assert!(out.stdout.is_empty());
-}
-
-#[test]
-fn ob2unix_help_goes_to_stdout() {
-    let out = run(OB2UNIX, &["--help"], b"");
-    assert!(out.status.success());
-    assert!(out.stderr.is_empty());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
-}
-
-#[test]
-fn ob2unix_requires_a_file_argument() {
-    // No FILE: clap fails fast (exit 2) and points at --help, rather than hanging.
-    let out = run(OB2UNIX, &[], b"");
-    assert_eq!(out.status.code(), Some(2));
-    assert!(out.stdout.is_empty());
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("required"));
-    assert!(stderr.contains("--help"));
-}
-
-#[test]
-fn ob2unix_errors_on_missing_file() {
-    let out = run(OB2UNIX, &["does-not-exist.Mod"], b"");
-    assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("can't open 'does-not-exist.Mod'"));
-}
-
-#[test]
-fn ob2unix_rejects_extra_argument() {
-    let out = run(OB2UNIX, &["a.Mod", "b.Mod"], b"");
-    assert_eq!(out.status.code(), Some(2)); // clap usage error
-    assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
-}
-
-// "8U6%" is the AsciiCoder 6-bit encoding of the bytes "Hi".
-const HI_ARCHIVE: &[u8] = b"AsciiCoder.DecodeFiles\nhi.txt ~ 8U6%";
-
-#[test]
-fn asciidecoder_extracts_into_directory() {
-    let dir = scratch_dir("extract");
-    let out = run(ASCIIDECODER, &["-C", dir.to_str().unwrap()], HI_ARCHIVE);
+    // A.Mod -> A.Mod.txt: CR becomes LF, content otherwise intact.
+    let out = run(OB2TXT, &[src.to_str().unwrap()], b"");
     assert!(
         out.status.success(),
-        "stderr: {}",
+        "ob2txt: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(std::fs::read(dir.join("hi.txt")).unwrap(), b"Hi");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn asciidecoder_verbose_lists_filenames() {
-    let dir = scratch_dir("verbose");
-    let out = run(
-        ASCIIDECODER,
-        &["-v", "-C", dir.to_str().unwrap()],
-        HI_ARCHIVE,
+    assert_eq!(
+        std::fs::read(dir.join("A.Mod.txt")).unwrap(),
+        b"MODULE A;\n  IMPORT B;\nEND A.\n"
     );
-    assert!(out.status.success());
-    assert_eq!(out.stdout, b"hi.txt\n");
-    let _ = std::fs::remove_dir_all(&dir);
-}
 
-#[test]
-fn asciidecoder_errors_without_marker() {
-    let out = run(ASCIIDECODER, &[], b"no archive marker here");
-    assert_eq!(out.status.code(), Some(1));
+    // A.Mod.txt -> A.Mod: LF back to CR, byte-identical to the original.
+    let out = run(TXT2OB, &[dir.join("A.Mod.txt").to_str().unwrap()], b"");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("no AsciiCoder.DecodeFiles archive found")
+        out.status.success(),
+        "txt2ob: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(std::fs::read(&src).unwrap(), original);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Non-ASCII round-trips through Latin-1: byte 0xE4 (`ä`) <-> UTF-8 `ä`.
 #[test]
-fn asciidecoder_help_goes_to_stdout() {
-    let out = run(ASCIIDECODER, &["--help"], b"");
+fn ob2txt_round_trips_latin1() {
+    let dir = scratch_dir("ob2txt-latin1");
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("U.Mod");
+    std::fs::write(&src, [0xE4u8, b'\r']).unwrap(); // 'ä', CR
+
+    let out = run(OB2TXT, &[src.to_str().unwrap()], b"");
     assert!(out.status.success());
-    assert!(out.stderr.is_empty());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage:"));
+    assert_eq!(std::fs::read(dir.join("U.Mod.txt")).unwrap(), b"\xc3\xa4\n"); // UTF-8 'ä', LF
+
+    let out = run(TXT2OB, &[dir.join("U.Mod.txt").to_str().unwrap()], b"");
+    assert!(out.status.success());
+    assert_eq!(std::fs::read(&src).unwrap(), [0xE4u8, b'\r']);
+
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `txt2ob` insists on a `.txt` input, so it can't overwrite the wrong file.
 #[test]
-fn asciidecoder_rejects_unknown_flag() {
-    let out = run(ASCIIDECODER, &["-x"], b"");
-    assert_eq!(out.status.code(), Some(2)); // clap usage error
-    assert!(String::from_utf8_lossy(&out.stderr).contains("unexpected argument"));
+fn txt2ob_requires_a_txt_suffix() {
+    let dir = scratch_dir("txt2ob-suffix");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("A.Mod");
+    std::fs::write(&f, b"x").unwrap();
+    let out = run(TXT2OB, &[f.to_str().unwrap()], b"");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(".txt"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A missing FILE is a clap usage error (exit 2, points at --help), not a hang.
+#[test]
+fn ob2txt_requires_a_file_argument() {
+    let out = run(OB2TXT, &[], b"");
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--help"));
 }
 
 // Heavy: compiles all of Project Oberon through the shim, so it's `#[ignore]`d —

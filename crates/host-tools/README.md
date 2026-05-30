@@ -8,8 +8,8 @@ proper `--help`.
 
 | Binary           | What it does                                                              | Deps        |
 | ---------------- | ------------------------------------------------------------------------- | ----------- |
-| `ob2unix`        | dump the plain-text content of an Oberon text                             | pure `std`  |
-| `asciidecoder`   | unpack an `AsciiCoder.DecodeFiles` archive                                | pure `std`  |
+| `ob2txt`         | convert an Oberon source/text file to host text (`<FILE>.txt`)            | pure `std`  |
+| `txt2ob`         | convert host text back to Oberon format (inverse of `ob2txt`)             | pure `std`  |
 | `extract-source` | extract a build-ready source tree from a disk image (drops .rsc/.smb)     | pure `std`  |
 | `build-po-image` | compile Project Oberon 2013 from sources and assemble a bootable disk     | `risc-core` |
 | `build-eo-image` | the Extended Oberon counterpart of `build-po-image`                       | `risc-core` |
@@ -27,23 +27,26 @@ EO bootstrap and the host toolchain — they build, boot, drive, and observe EO 
 *outside* the emulator. Nothing within Oberon uses them: an on-EO coding agent would
 be an Oberon module driving the system through EO's own interfaces.
 
-## ob2unix
+## ob2txt
 
-Drops the binary Oberon-text header and converts CR line endings to LF (a file
-that isn't an Oberon text passes through unchanged). Takes the file to convert as
-an argument and writes to stdout:
+Converts an Oberon source/text file (plain Latin-1 with CR line endings) to
+readable host text (UTF-8 with LF), written to `<FILE>.txt` — the original is left
+untouched:
 
 ```sh
-cargo run -p host-tools --bin ob2unix -- Input.Mod > input.txt
+cargo run -p host-tools --bin ob2txt -- A.Mod   # writes A.Mod.txt
 ```
 
-## asciidecoder
+## txt2ob
 
-Extracts the member files from an `AsciiCoder.DecodeFiles` archive. `-v` lists
-each extracted name; `-C DIR` sets the output directory:
+The inverse: host UTF-8/LF back to Oberon Latin-1/CR. `txt2ob A.Mod.txt` writes
+`A.Mod` (the input must end in `.txt`). Handy for authoring a file in Oberon's
+native form — e.g. a `System.Tool` to push with `eo-driver`, where CR endings
+matter (LF renders as one merged line in the viewer). Code points beyond Latin-1
+become `?`:
 
 ```sh
-cargo run -p host-tools --bin asciidecoder -- -v -C outdir archive.txt
+cargo run -p host-tools --bin txt2ob -- A.Mod.txt   # writes A.Mod
 ```
 
 ## build-po-image
@@ -113,7 +116,8 @@ cargo run -p host-tools --release --bin build-po-image -- out rebuilt.dsk   # ro
 ```
 
 Files come out byte-for-byte. Oberon sources (`*.Mod`, `*.Tool`, `*.Text`) are
-"Oberon Text", so pipe them through `ob2unix` to read them as plain text.
+plain Latin-1 with CR line endings; run them through `ob2txt` to read them as host
+(UTF-8/LF) text.
 
 ## eo-driver
 

@@ -6,8 +6,8 @@ license = "ISC"
 description = "Host-side Oberon tools: text/archive converters, source extractor, and bootable disk-image builders for Project Oberon 2013 and Extended Oberon"
 
 # CLI tools, auto-discovered from src/bin/:
-#   ob2unix        - dump the plain-text content of an Oberon Text file
-#   asciidecoder   - unpack an 'AsciiCoder.DecodeFiles' archive
+#   ob2txt         - convert an Oberon source/text file to host text (<FILE>.txt)
+#   txt2ob         - convert host text back to Oberon format (inverse of ob2txt)
 #   build-po-image - compile Project Oberon 2013 and assemble a bootable disk image
 #   build-eo-image - the Extended Oberon counterpart of build-po-image
 #   extract-source - extract the source tree from an Oberon disk image

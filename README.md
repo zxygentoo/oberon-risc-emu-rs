@@ -84,27 +84,22 @@ clipboard (via [`arboard`](https://crates.io/crates/arboard)). Middle-click:
 ## Host tools
 
 The [`host-tools`](crates/host-tools) crate bundles command-line tools for
-working with Oberon on the host. `ob2unix` and `asciidecoder` are pure-`std` file
-converters (ported from `oberon-risc-emu`'s `tools/`) and `extract-source` reads a
-disk image directly; `build-po-image` and `build-eo-image` run a headless Oberon on
+working with Oberon on the host. `ob2txt`/`txt2ob` convert Oberon source/text to and
+from host text and `extract-source` reads a disk image directly; `build-po-image`
+and `build-eo-image` run a headless Oberon on
 the `risc-core` CPU (a port of
 [`project-norebo`](https://github.com/pdewacht/project-norebo)) to build bootable
 Project Oberon 2013 and Extended Oberon images. Build them with `make tools`; the
 examples below run them straight from `target/release/`.
 
-- **`ob2unix`** — dump the plain-text content of an Oberon text: drops the binary
-  header and converts CR line endings to LF (a non-Oberon file passes through). It
-  takes the file to convert as an argument:
+- **`ob2txt`** / **`txt2ob`** — convert Oberon source/text to and from readable
+  host text. Extracted Oberon files are plain Latin-1 with CR line endings;
+  `ob2txt A.Mod` writes `A.Mod.txt` (UTF-8/LF), and `txt2ob A.Mod.txt` converts it
+  back to `A.Mod`:
 
   ```sh
-  ./target/release/ob2unix Input.Mod > input.txt
-  ```
-
-- **`asciidecoder`** — extract the files from an `AsciiCoder.DecodeFiles` archive;
-  `-v` lists each extracted name, `-C DIR` sets the output directory:
-
-  ```sh
-  ./target/release/asciidecoder -v -C outdir archive.txt
+  ./target/release/ob2txt A.Mod      # -> A.Mod.txt
+  ./target/release/txt2ob A.Mod.txt  # -> A.Mod
   ```
 
 - **`build-po-image`** — compile Project Oberon 2013 from a source tree and

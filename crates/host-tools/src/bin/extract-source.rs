@@ -17,8 +17,8 @@
 //! (e.g. Extended Oberon's `RISC.img`).
 //!
 //! Extracted files are byte-for-byte as stored. Oberon sources (`*.Mod`,
-//! `*.Tool`, `*.Text`) are "Oberon Text", not plain UTF-8; pipe them through
-//! [`ob2unix`](../ob2unix) to read them as plain text.
+//! `*.Tool`, `*.Text`) are plain Latin-1 with CR line endings; run them through
+//! [`ob2txt`](../ob2txt) to read them as host (UTF-8/LF) text.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};

@@ -182,8 +182,9 @@ a way to size/trim the output image.
 ## Reproduction recipes (exact)
 
 Binaries: `cargo build --release -p host-tools` (eo-driver, eo-inner-run, build-eo-image,
-build-po-image, extract-source, ob2unix). EO source as plain text:
-`target/debug/ob2unix <file>`.
+build-po-image, extract-source, ob2txt, txt2ob). EO sources extract as plain Latin-1
+with CR line endings; read one as host text with `target/debug/ob2txt <file>` (writes
+`<file>.txt`).
 
 **Round-trip — extract → build → boot (~4 s build):**
 ```
@@ -276,7 +277,7 @@ OBERON_TRACE=1 target/release/eo-inner-run /tmp/eo-system <cmd>    # → trace o
   The pipeline (`build`, `NOREBO_MODULES`, the `.rsx`/link/install steps) lives in
   `host_tools::image`; compile order in `host_tools::resolve`. Both shared with
   `build-po-image`.
-- EO reference sources (ob2unix'd, regenerate with `target/debug/ob2unix`):
+- EO reference sources (`ob2txt`'d to `.txt`, regenerate with `target/debug/ob2txt`):
   `/tmp/eo-txt/{Modules,Kernel,Disk,Files,FileDir,Oberon}.Mod`. EO's `Modules.Load`
   (`/tmp/eo-txt/Modules.Mod` ~56–220) is the fixup/format reference for `CoreLinker`.
 - Harvested EO seed: `/tmp/eo-seed/` (sources + objects via `--keep-objects`).

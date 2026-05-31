@@ -2,7 +2,9 @@
 
 A Rust port of Peter De Wachter's [`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu) —
 an emulator for Niklaus Wirth's Project Oberon RISC5 machine. It boots a disk
-image to the interactive desktop.
+image to the interactive desktop. It can also extract the sources from an Oberon
+disk image and rebuild a bootable image from source — for both Project Oberon 2013
+and Extended Oberon, with no FPGA, external Oberon, or C toolchain.
 
 ![Project Oberon (Oberon V5) desktop](po2013.png)
 

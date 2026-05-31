@@ -4,7 +4,8 @@ A Rust port of Peter De Wachter's [`oberon-risc-emu`](https://github.com/pdewach
 an emulator for Niklaus Wirth's Project Oberon RISC5 machine. It boots a disk
 image to the interactive desktop. It can also extract the sources from an Oberon
 disk image and rebuild a bootable image from source — for both Project Oberon 2013
-and Extended Oberon, with no FPGA, external Oberon, or C toolchain.
+and [Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended), with
+no FPGA, external Oberon, or C toolchain.
 
 ![Project Oberon (Oberon V5) desktop](po2013.png)
 
@@ -42,7 +43,9 @@ A `Makefile` wraps Cargo for the common workflows:
 | `make clean`  | `cargo clean`                                                         |
 
 `make oberon DISK=other.dsk` boots a different image; the upstream repo has
-[other dated versions](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+[other dated versions](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage),
+and the [Extended Oberon repo](https://github.com/andreaspirklbauer/Oberon-extended)
+has a prebuilt one.
 
 ## Controls
 
@@ -203,6 +206,7 @@ Bundled third-party material keeps its own upstream copyright (also ISC):
 
 - `DiskImage/` — Project Oberon 2013 system software (its authors' work, from the
   upstream distribution);
-- `crates/host-tools/assets/` — Norebo host modules and bootstrap objects vendored
-  from [`project-norebo`](https://github.com/pdewacht/project-norebo), derived from
-  Project Oberon 2013 (see [`README.md`](crates/host-tools/assets/README.md)).
+- `crates/host-tools/assets/` — host glue and prebuilt bootstrap objects for the
+  image builders, vendored from [`project-norebo`](https://github.com/pdewacht/project-norebo)
+  and [Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended); both
+  derive from Project Oberon 2013 (see [`README.md`](crates/host-tools/assets/README.md)).

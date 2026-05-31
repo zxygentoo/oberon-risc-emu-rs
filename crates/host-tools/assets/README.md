@@ -2,7 +2,7 @@
 
 These files are vendored from Peter De Wachter's
 [project-norebo](https://github.com/pdewacht/project-norebo) and from
-[Extended Oberon](https://github.com/io-core/Extended-Oberon) (Andreas Pirklbauer),
+[Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended) (Andreas Pirklbauer),
 and embedded into the `build-po-image` / `build-eo-image` binaries (via
 `include_bytes!`) so they can build a bootable disk image without an external
 checkout.

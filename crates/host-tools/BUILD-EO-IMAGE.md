@@ -55,8 +55,8 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
 `build-eo-image + EO bootstrap seed (boot solved: Modules-top)` ·
 `build-eo-image → bootable Oberon.dsk (.rsx CoreLinker, shared resolve, round-trip)`.
 
-- **`extract-source`** (`src/bin/extract-source.rs`): the `dsk` reader
-  (`host_tools::dsk`, `src/dsk.rs`) auto-detects the FS offset (raw `.dsk` at 0, full
+- **`extract-source`** (`src/bin/extract-source.rs`): the `image` reader
+  (`host_tools::image`, `src/image.rs`) auto-detects the FS offset (raw `.dsk` at 0, full
   SD `RISC.img` at `0x10000400` = `0x80002` blocks).
   `--keep-objects` also extracts `.rsc`/`.smb` (seed harvesting).
 - **`eo-driver`** (`src/bin/eo-driver.rs`): host-side dev tool to boot, drive, and observe EO headless. Flags:

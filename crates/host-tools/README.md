@@ -107,7 +107,7 @@ directory — the inverse of the image builders. It drops the compiled artifacts
 (`.rsc`/`.smb`, which the builders regenerate from source), so the output is a
 build-ready tree. It also writes the `.packonly` manifest the builders require,
 derived from which `.Mod` files carry a compiled object on the image. It reads the
-Oberon on-disk filesystem directly (see [`dsk.rs`](src/dsk.rs)),
+Oberon on-disk filesystem directly (see [`image.rs`](src/image.rs)),
 so it needs no emulator and no boot:
 
 ```sh

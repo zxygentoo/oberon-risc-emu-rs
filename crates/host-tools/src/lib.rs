@@ -4,7 +4,7 @@
 //! they have in common lives here, so there is a single source of truth (and one
 //! set of tests) rather than a copy per binary that can quietly drift: the headless
 //! [`shim`] runtime, the compile-order [`resolve`]r, the disk-image build
-//! [`pipeline`], the [`dsk`] image reader, the [`packonly`] manifest format, and the one
+//! [`pipeline`], the [`image`] disk reader, the [`packonly`] manifest format, and the one
 //! low-level Oberon rule below. What stays per-binary is just the embedded toolchain
 //! seed and the CLI.
 
@@ -26,7 +26,7 @@ pub mod pipeline;
 /// A read-only reader for the Project Oberon on-disk filesystem — the inverse of the
 /// image builders: parse a `.dsk`/`RISC.img` straight into its files, no emulator.
 /// Used by `extract-source`.
-pub mod dsk;
+pub mod image;
 
 /// The `.packonly` manifest format (parse + render): the files a source tree packs
 /// into the image verbatim rather than compiling. Shared by [`resolve`] (reads it,
@@ -36,7 +36,7 @@ pub mod packonly;
 /// Whether byte `ch` is legal at 0-based position `i` of a Project Oberon file name:
 /// a leading ASCII letter, then letters, digits, or `.` (the `FileDir.Mod` rule,
 /// mirrored by `norebo.c`'s `files_check_name`). The one rule shared widely enough
-/// to live at the crate root — used by [`shim`] (the syscall ABI) and [`dsk`] (the
+/// to live at the crate root — used by [`shim`] (the syscall ABI) and [`image`] (the
 /// directory reader).
 ///
 /// This is the per-character predicate only; callers layer their own length and

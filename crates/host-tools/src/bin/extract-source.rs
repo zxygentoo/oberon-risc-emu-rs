@@ -9,7 +9,7 @@
 //! `X.rsc` object, and every other extracted file (data, plus reference modules
 //! that ship as source with no object) is recorded as pack-only.
 //!
-//! It reads the Oberon on-disk filesystem directly (see [`dsk`]); no emulator, no
+//! It reads the Oberon on-disk filesystem directly (see [`image`]); no emulator, no
 //! boot. Usage: `extract-source <DISK_IMAGE> <OUTPUT_DIR>`.
 //!
 //! By default the compiled artifacts are skipped; pass `--keep-objects` to also
@@ -27,7 +27,7 @@ use std::{fs, io};
 
 use clap::Parser;
 
-use host_tools::dsk::Image;
+use host_tools::image::Image;
 
 /// The `.packonly` manifest section appended to `--help`.
 const PACKONLY_HELP: &str = "\
@@ -145,7 +145,7 @@ fn run(cli: &Cli) -> io::Result<()> {
 }
 
 /// Write one extracted file into `dir`. Rejects any name that doesn't resolve to
-/// a direct child of `dir` — defense in depth on top of [`dsk`]'s name validation.
+/// a direct child of `dir` — defense in depth on top of [`image`]'s name validation.
 fn write_file(dir: &Path, name: &str, data: &[u8]) -> io::Result<()> {
     let path = dir.join(name);
     if path.parent() != Some(dir) {

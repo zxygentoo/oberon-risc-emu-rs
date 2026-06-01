@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::{fs, io};
 
 use crate::resolve;
-use crate::shim::run;
+use risc_core::shim::run;
 
 /// Modules compiled to seed the host toolchain, then linked into a fresh inner
 /// core (project-norebo's `build_norebo` set). The host versions of

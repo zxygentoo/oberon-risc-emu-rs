@@ -323,7 +323,7 @@ fn eo_seed_boots_compiles_and_runs() {
     .unwrap();
 
     let path = [dir.clone()];
-    let compile = host_tools::shim::run(&["ORP.Compile".into(), "Tiny.Mod/s".into()], &dir, &path)
+    let compile = risc_core::shim::run(&["ORP.Compile".into(), "Tiny.Mod/s".into()], &dir, &path)
         .expect("shim run (compile)");
     assert_eq!(compile, 0, "compiling Tiny in the EO seed should succeed");
     assert!(
@@ -331,7 +331,7 @@ fn eo_seed_boots_compiles_and_runs() {
         "ORP.Compile produced no Tiny.rsc"
     );
 
-    let go = host_tools::shim::run(&["Tiny.Go".into()], &dir, &path).expect("shim run (Go)");
+    let go = risc_core::shim::run(&["Tiny.Go".into()], &dir, &path).expect("shim run (Go)");
     assert_eq!(go, 0, "running the freshly compiled Tiny.Go should succeed");
 
     let _ = std::fs::remove_dir_all(&dir);

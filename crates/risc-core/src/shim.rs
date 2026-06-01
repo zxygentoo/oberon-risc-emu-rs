@@ -1,10 +1,18 @@
-//! Headless "shim" runtime: drive the [`risc_core`] CPU from an inner-core
-//! image, mapping Oberon's `Kernel`/`Files`/`FileDir` operations onto the host
-//! filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
+//! Headless "shim" runtime: drive the [`Risc`](crate::risc::Risc) CPU from an
+//! inner-core image, mapping Oberon's `Kernel`/`Files`/`FileDir` operations onto
+//! the host filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
 //!
-//! [`run`] runs one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to
-//! completion and returns its exit code; the [`pipeline`](crate::pipeline)
-//! drives it repeatedly to compile a whole Oberon system and assemble a disk image.
+//! This is the CPU's *second* execution mode, the counterpart to the FPGA device
+//! map in [`crate::io`]: rather than disk/display/keyboard devices, the whole MMIO
+//! region routes to this host, and the machine boots an `InnerCore` image instead
+//! of the boot ROM. The CPU hands the host every MMIO access; the byte offsets it
+//! answers (`address - 0xFFFFFFC0`, i.e. `norebo.c`'s `adr + 64`) are: `0` ms clock,
+//! `8` stdin/stdout, `12` status, `48`/`52`/`56` syscall args 2/1/0, `60` syscall
+//! trigger / result.
+//!
+//! [`run`] runs one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion
+//! and returns its exit code; the host-side `build-*-image` pipeline drives it
+//! repeatedly to compile a whole Oberon system and assemble a disk image.
 
 use std::fs;
 use std::io::{self, Read, Write};
@@ -12,8 +20,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::name_char_ok;
-use risc_core::io::{ShimHost, ShimMem};
-use risc_core::risc::Risc;
+use crate::risc::Risc;
 
 /// Fixed RAM size (`norebo.c` `MemBytes`).
 const MEM_BYTES: u32 = 8 * 1024 * 1024;
@@ -88,7 +95,7 @@ impl OpenFile {
 }
 
 /// The shim host: command-line args, the open-file table, and the syscall ABI.
-struct Host {
+pub(crate) struct Host {
     cwd: PathBuf,
     path: Vec<PathBuf>,
     args: Vec<String>,
@@ -369,8 +376,8 @@ impl Host {
     }
 }
 
-impl ShimHost for Host {
-    fn load(&mut self, offset: u32, _mem: &mut ShimMem) -> u32 {
+impl Host {
+    pub(crate) fn load(&mut self, offset: u32) -> u32 {
         match offset {
             0 => self.start.elapsed().as_millis() as u32, // millisecond clock
             8 => read_stdin_byte(),                       // getchar
@@ -383,7 +390,7 @@ impl ShimHost for Host {
         }
     }
 
-    fn store(&mut self, offset: u32, value: u32, mem: &mut ShimMem) {
+    pub(crate) fn store(&mut self, offset: u32, value: u32, ram: &mut [u32]) {
         match offset {
             8 => {
                 // putchar
@@ -392,13 +399,14 @@ impl ShimHost for Host {
             48 => self.sysarg[2] = value,
             52 => self.sysarg[1] = value,
             56 => self.sysarg[0] = value,
-            60 => self.sysres = self.sysreq(value, mem),
+            // Only the syscall trigger reaches into guest memory, so wrap `ram` here.
+            60 => self.sysres = self.sysreq(value, &mut ShimMem::new(ram)),
             // offset 4 (LEDs) and anything else: ignored.
             _ => {}
         }
     }
 
-    fn exit_code(&self) -> Option<i32> {
+    pub(crate) fn exit_code(&self) -> Option<i32> {
         self.exit
     }
 }
@@ -457,3 +465,44 @@ fn read_stdin_byte() -> u32 {
 /// A fixed Oberon-encoded date (2024-05-27 12:00:00). File dates are recorded in
 /// the directory but do not affect a freshly-booted image's framebuffer.
 const OBERON_DATE: u32 = (24 << 26) | (5 << 22) | (27 << 17) | (12 << 12);
+
+/// A byte-addressable view of the guest's RAM, wrapped per syscall from the
+/// [`Risc`](crate::risc::Risc)'s word array so the handlers can read their
+/// arguments and read/write file data directly in emulated memory (`norebo.c`
+/// operates on a global `mem[]`; this is the borrow-safe equivalent — the `Risc`
+/// lends its `ram` only for the duration of one `store`).
+struct ShimMem<'a> {
+    ram: &'a mut [u32],
+}
+
+impl<'a> ShimMem<'a> {
+    fn new(ram: &'a mut [u32]) -> Self {
+        Self { ram }
+    }
+
+    /// Read the byte at `adr`.
+    fn read_byte(&self, adr: u32) -> u8 {
+        (self.ram[(adr / 4) as usize] >> ((adr % 4) * 8)) as u8
+    }
+
+    /// Write the byte at `adr` (read-modify-write of its containing word).
+    fn write_byte(&mut self, adr: u32, value: u8) {
+        let i = (adr / 4) as usize;
+        let shift = (adr % 4) * 8;
+        self.ram[i] = (self.ram[i] & !(0xFFu32 << shift)) | (u32::from(value) << shift);
+    }
+
+    /// Copy `buf.len()` bytes from memory starting at `adr` into `buf`.
+    fn read_bytes(&self, adr: u32, buf: &mut [u8]) {
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = self.read_byte(adr + i as u32);
+        }
+    }
+
+    /// Copy `buf` into memory starting at `adr`.
+    fn write_bytes(&mut self, adr: u32, buf: &[u8]) {
+        for (i, &b) in buf.iter().enumerate() {
+            self.write_byte(adr + i as u32, b);
+        }
+    }
+}

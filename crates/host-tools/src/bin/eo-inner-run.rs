@@ -1,5 +1,5 @@
-//! `eo-inner-run` — boot an `InnerCore` under the headless [`shim`] runtime and run
-//! a single Oberon command. A thin wrapper over `host_tools::shim::run`: the
+//! `eo-inner-run` — boot an `InnerCore` under the headless `risc_core::shim` runtime
+//! and run a single Oberon command. A thin wrapper over `risc_core::shim::run`: the
 //! `InnerCore` image and any modules the command loads (`.rsc`) are taken from `DIR`.
 //!
 //! A host-side developer tool for hacking on the Extended Oberon bootstrap and the
@@ -30,7 +30,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    match host_tools::shim::run(&cli.command, &cli.dir, std::slice::from_ref(&cli.dir)) {
+    match risc_core::shim::run(&cli.command, &cli.dir, std::slice::from_ref(&cli.dir)) {
         Ok(code) => {
             eprintln!("eo-inner-run: guest exit code {code}");
             exit(code);

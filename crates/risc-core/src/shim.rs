@@ -30,6 +30,50 @@ const STACK_ORG: u32 = 0x0008_0000;
 const MAX_FILES: usize = 500;
 /// Oberon file-name length (`norebo.c` `NameLength`).
 const NAME_LEN: usize = 32;
+/// A fixed Oberon-encoded date (2024-05-27 12:00:00). File dates are recorded in
+/// the directory but do not affect a freshly-booted image's framebuffer.
+const OBERON_DATE: u32 = (24 << 26) | (5 << 22) | (27 << 17) | (12 << 12);
+
+/// A byte-addressable view of the guest's RAM, wrapped per syscall from the
+/// [`Risc`](crate::risc::Risc)'s word array so the handlers can read their
+/// arguments and read/write file data directly in emulated memory (`norebo.c`
+/// operates on a global `mem[]`; this is the borrow-safe equivalent — the `Risc`
+/// lends its `ram` only for the duration of one `store`).
+struct ShimMem<'a> {
+    ram: &'a mut [u32],
+}
+
+impl<'a> ShimMem<'a> {
+    fn new(ram: &'a mut [u32]) -> Self {
+        Self { ram }
+    }
+
+    /// Read the byte at `adr`.
+    fn read_byte(&self, adr: u32) -> u8 {
+        (self.ram[(adr / 4) as usize] >> ((adr % 4) * 8)) as u8
+    }
+
+    /// Write the byte at `adr` (read-modify-write of its containing word).
+    fn write_byte(&mut self, adr: u32, value: u8) {
+        let i = (adr / 4) as usize;
+        let shift = (adr % 4) * 8;
+        self.ram[i] = (self.ram[i] & !(0xFFu32 << shift)) | (u32::from(value) << shift);
+    }
+
+    /// Copy `buf.len()` bytes from memory starting at `adr` into `buf`.
+    fn read_bytes(&self, adr: u32, buf: &mut [u8]) {
+        for (i, b) in buf.iter_mut().enumerate() {
+            *b = self.read_byte(adr + i as u32);
+        }
+    }
+
+    /// Copy `buf` into memory starting at `adr`.
+    fn write_bytes(&mut self, adr: u32, buf: &[u8]) {
+        for (i, &b) in buf.iter().enumerate() {
+            self.write_byte(adr + i as u32, b);
+        }
+    }
+}
 
 /// Run one Oberon command headlessly. `args` is the command and its parameters
 /// (e.g. `["ORP.Compile", "Foo.Mod/s"]`); files are resolved relative to `cwd`,
@@ -462,47 +506,149 @@ fn read_stdin_byte() -> u32 {
     }
 }
 
-/// A fixed Oberon-encoded date (2024-05-27 12:00:00). File dates are recorded in
-/// the directory but do not affect a freshly-booted image's framebuffer.
-const OBERON_DATE: u32 = (24 << 26) | (5 << 22) | (27 << 17) | (12 << 12);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// A byte-addressable view of the guest's RAM, wrapped per syscall from the
-/// [`Risc`](crate::risc::Risc)'s word array so the handlers can read their
-/// arguments and read/write file data directly in emulated memory (`norebo.c`
-/// operates on a global `mem[]`; this is the borrow-safe equivalent — the `Risc`
-/// lends its `ram` only for the duration of one `store`).
-struct ShimMem<'a> {
-    ram: &'a mut [u32],
-}
+    // --- ShimMem: byte addressing over the guest's word array ---
 
-impl<'a> ShimMem<'a> {
-    fn new(ram: &'a mut [u32]) -> Self {
-        Self { ram }
-    }
-
-    /// Read the byte at `adr`.
-    fn read_byte(&self, adr: u32) -> u8 {
-        (self.ram[(adr / 4) as usize] >> ((adr % 4) * 8)) as u8
-    }
-
-    /// Write the byte at `adr` (read-modify-write of its containing word).
-    fn write_byte(&mut self, adr: u32, value: u8) {
-        let i = (adr / 4) as usize;
-        let shift = (adr % 4) * 8;
-        self.ram[i] = (self.ram[i] & !(0xFFu32 << shift)) | (u32::from(value) << shift);
-    }
-
-    /// Copy `buf.len()` bytes from memory starting at `adr` into `buf`.
-    fn read_bytes(&self, adr: u32, buf: &mut [u8]) {
-        for (i, b) in buf.iter_mut().enumerate() {
-            *b = self.read_byte(adr + i as u32);
+    #[test]
+    fn shimmem_packs_bytes_little_endian() {
+        let mut ram = vec![0u32; 1];
+        {
+            let mut mem = ShimMem::new(&mut ram);
+            mem.write_byte(0, 0x00);
+            mem.write_byte(1, 0x11);
+            mem.write_byte(2, 0x22);
+            mem.write_byte(3, 0x33);
         }
+        assert_eq!(ram[0], 0x3322_1100); // little-endian within the word
     }
 
-    /// Copy `buf` into memory starting at `adr`.
-    fn write_bytes(&mut self, adr: u32, buf: &[u8]) {
-        for (i, &b) in buf.iter().enumerate() {
-            self.write_byte(adr + i as u32, b);
-        }
+    #[test]
+    fn shimmem_write_byte_preserves_neighbors() {
+        let mut ram = vec![0xFFFF_FFFFu32];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_byte(2, 0x00); // clear only the third byte
+        assert_eq!(mem.read_byte(2), 0x00);
+        assert_eq!(mem.read_byte(3), 0xFF);
+        drop(mem);
+        assert_eq!(ram[0], 0xFF00_FFFF);
+    }
+
+    #[test]
+    fn shimmem_bytes_round_trip_across_a_word_boundary() {
+        let mut ram = vec![0u32; 4];
+        let mut mem = ShimMem::new(&mut ram);
+        let src = [1u8, 2, 3, 4, 5, 6]; // 6 bytes from adr 2 spans two words
+        mem.write_bytes(2, &src);
+        let mut got = [0u8; 6];
+        mem.read_bytes(2, &mut got);
+        assert_eq!(got, src);
+    }
+
+    // --- name validation (read_name reads guest memory; valid_name is pure) ---
+
+    fn name_at_zero(bytes: &[u8]) -> Option<String> {
+        let mut ram = vec![0u32; NAME_LEN]; // ample room
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, bytes);
+        read_name(&mem, 0)
+    }
+
+    #[test]
+    fn read_name_stops_at_the_nul() {
+        assert_eq!(
+            name_at_zero(b"Kernel.Mod\0junk").as_deref(),
+            Some("Kernel.Mod")
+        );
+    }
+
+    #[test]
+    fn read_name_empty_is_ok_but_unterminated_is_rejected() {
+        assert_eq!(name_at_zero(b"\0").as_deref(), Some("")); // leading NUL
+        assert_eq!(name_at_zero(&[b'A'; NAME_LEN]), None); // no terminator in 32 bytes
+    }
+
+    #[test]
+    fn read_name_rejects_illegal_chars() {
+        assert_eq!(name_at_zero(b"a/b\0"), None); // path separator
+        assert_eq!(name_at_zero(b"9bad\0"), None); // leading digit
+    }
+
+    #[test]
+    fn valid_name_enforces_length_and_charset() {
+        assert!(valid_name(b"Oberon10.Scn.Fnt"));
+        assert!(!valid_name(b"")); // empty
+        assert!(!valid_name(&[b'A'; NAME_LEN])); // >= NAME_LEN
+        assert!(!valid_name(b"bad name")); // space is illegal
+    }
+
+    // --- Host file ABI, exercised directly (no CPU, no disk) ---
+
+    fn host() -> Host {
+        // A cwd that does not exist: the in-memory tests never persist, and the
+        // `files_old` case wants the host-side read to simply fail.
+        Host::new(std::path::PathBuf::from("/nonexistent-shim-test"), vec![], vec![])
+    }
+
+    #[test]
+    fn files_new_write_seek_read_round_trips_in_memory() {
+        let mut ram = vec![0u32; 64];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, b"Scratch\0");
+        let mut h = host();
+        let fd = h.files_new(0, &mut mem);
+        assert_ne!(fd, u32::MAX);
+
+        let payload = b"hello oberon";
+        mem.write_bytes(64, payload);
+        assert_eq!(
+            h.files_write(fd, 64, payload.len() as u32, &mut mem),
+            payload.len() as u32
+        );
+
+        h.files_seek(fd, 0, 0); // whence 0 = SET
+        assert_eq!(
+            h.files_read(fd, 128, payload.len() as u32, &mut mem),
+            payload.len() as u32
+        );
+        let mut got = vec![0u8; payload.len()];
+        mem.read_bytes(128, &mut got);
+        assert_eq!(got, payload);
+    }
+
+    #[test]
+    fn files_read_past_eof_zero_fills() {
+        let mut ram = vec![0u32; 64];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, b"Scratch\0");
+        let mut h = host();
+        let fd = h.files_new(0, &mut mem);
+        mem.write_bytes(64, &[0xAA, 0xBB]);
+        h.files_write(fd, 64, 2, &mut mem);
+        h.files_seek(fd, 0, 0);
+
+        mem.write_bytes(128, &[0xFF; 4]); // dirty the destination first
+        assert_eq!(h.files_read(fd, 128, 4, &mut mem), 2); // only 2 available
+        let mut got = [0u8; 4];
+        mem.read_bytes(128, &mut got);
+        assert_eq!(got, [0xAA, 0xBB, 0x00, 0x00]); // tail zero-filled
+    }
+
+    #[test]
+    fn files_new_rejects_an_illegal_name() {
+        let mut ram = vec![0u32; 16];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, b"a/b\0");
+        assert_eq!(host().files_new(0, &mut mem), u32::MAX);
+    }
+
+    #[test]
+    fn files_old_on_a_missing_file_returns_max() {
+        let mut ram = vec![0u32; 16];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, b"Nope.Mod\0");
+        assert_eq!(host().files_old(0, &mut mem), u32::MAX);
     }
 }

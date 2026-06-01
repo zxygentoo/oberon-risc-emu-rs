@@ -18,7 +18,7 @@ proper `--help`.
 
 The two image builders share their whole pipeline — compile a source tree against
 an embedded toolchain, link a fresh inner core, lay down a bootable `Oberon.dsk` —
-in [`host_tools::image`](src/image.rs); each binary differs only in its embedded
+in [`host_tools::pipeline`](src/pipeline.rs); each binary differs only in its embedded
 seed and CLI. Compile-order resolution is shared in [`resolve`](src/resolve.rs),
 and the headless runtime in [`shim`](src/shim.rs).
 
@@ -81,7 +81,7 @@ error rather than being fed to the compiler.
 Internally the headless runtime is one function — [`shim::run`](src/shim.rs) —
 which executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion
 against the host filesystem and returns its guest exit code; the shared
-[`image::build`](src/image.rs) pipeline drives it repeatedly to compile the system
+[`pipeline::build`](src/pipeline.rs) pipeline drives it repeatedly to compile the system
 and lay down the disk.
 
 ## build-eo-image
@@ -94,7 +94,7 @@ shim and assembles a bootable `Oberon.dsk` that boots to the EO desktop.
 cargo run -p host-tools --release --bin build-eo-image -- path/to/eo-sources out.dsk
 ```
 
-It is *structurally identical* to `build-po-image` — same `image::build` pipeline,
+It is *structurally identical* to `build-po-image` — same `pipeline::build` pipeline,
 same `.packonly` rules — and differs only in its embedded seed: the EO-specific
 host glue and a `Modules`-topped bootstrap inner core. The full story (why
 `Modules` is the inner-core top, the `.rsx` offline-link convention, the EO
@@ -151,7 +151,7 @@ cargo test -p host-tools
 ```
 
 Unit tests cover the converters' pure functions, the `.packonly` and import-order
-logic, and the `image` pipeline's filesystem helpers; [`tests/cli.rs`](tests/cli.rs)
+logic, and the `pipeline`'s filesystem helpers; [`tests/cli.rs`](tests/cli.rs)
 exercises each binary end-to-end (argument handling, exit codes, the build's
 fail-clear paths) and boots the committed EO bootstrap seed to compile and run a
 module (`eo_seed_boots_compiles_and_runs`). Two heavy, `#[ignore]`d round-trip

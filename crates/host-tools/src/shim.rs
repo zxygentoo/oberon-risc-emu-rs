@@ -3,7 +3,7 @@
 //! filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
 //!
 //! [`run`] runs one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to
-//! completion and returns its exit code; the [`image`](crate::image) build pipeline
+//! completion and returns its exit code; the [`pipeline`](crate::pipeline)
 //! drives it repeatedly to compile a whole Oberon system and assemble a disk image.
 
 use std::fs;

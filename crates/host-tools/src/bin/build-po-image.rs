@@ -9,7 +9,7 @@
 //! project-norebo), so no external checkout is needed. Only the finished image is
 //! written, to `<output.dsk>`.
 //!
-//! All the work is the shared [`host_tools::image`] pipeline; this binary supplies
+//! All the work is the shared [`host_tools::pipeline`]; this binary supplies
 //! only the embedded PO2013 [`Seed`] and the CLI. Its Extended Oberon twin is
 //! `build-eo-image` — same pipeline, different seed.
 
@@ -18,7 +18,7 @@ use std::process::exit;
 
 use clap::Parser;
 
-use host_tools::image::{self, Seed, PACKONLY_HELP};
+use host_tools::pipeline::{self, Seed, PACKONLY_HELP};
 
 /// The embedded PO2013 toolchain seed (vendored under `assets/`): the shared host
 /// glue (`assets/common`), the PO2013-specific glue (`assets/po/glue`), and the
@@ -158,7 +158,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    if let Err(e) = image::build(&SEED, &cli.sources, &cli.output) {
+    if let Err(e) = pipeline::build(&SEED, &cli.sources, &cli.output) {
         eprintln!("build-po-image: {e}");
         exit(1);
     }

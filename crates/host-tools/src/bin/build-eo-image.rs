@@ -9,7 +9,7 @@
 //! headless host glue and a prebuilt EO bootstrap inner core are embedded in this
 //! binary (`assets/common` + `assets/eo`), so no external toolchain is needed.
 //!
-//! All the work is the shared [`host_tools::image`] pipeline; this binary supplies
+//! All the work is the shared [`host_tools::pipeline`]; this binary supplies
 //! only the embedded EO [`Seed`] and the CLI. The EO specifics are baked into that
 //! seed:
 //!  * the inner-core top module is **`Modules`** (its body runs `Init` →
@@ -26,7 +26,7 @@ use std::process::exit;
 
 use clap::Parser;
 
-use host_tools::image::{self, Seed, PACKONLY_HELP};
+use host_tools::pipeline::{self, Seed, PACKONLY_HELP};
 
 /// The embedded EO toolchain seed (vendored under `assets/`): the shared host glue
 /// (`assets/common`), the EO-specific glue (`assets/eo/glue`), and the prebuilt
@@ -161,7 +161,7 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    if let Err(e) = image::build(&SEED, &cli.sources, &cli.output) {
+    if let Err(e) = pipeline::build(&SEED, &cli.sources, &cli.output) {
         eprintln!("build-eo-image: {e}");
         exit(1);
     }

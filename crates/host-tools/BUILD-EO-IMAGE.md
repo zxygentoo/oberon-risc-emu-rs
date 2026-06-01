@@ -87,7 +87,7 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
   mirrors `build-po-image`: compile the toolchain → link a fresh `Modules`-topped inner
   core → compile the *whole* EO source tree → `CoreLinker.LinkDisk` the boot core →
   `VDiskUtil.InstallFiles`, producing a **bootable `Oberon.dsk`**. The whole pipeline
-  is shared in `host_tools::image` (compile→link→install) + `host_tools::resolve`
+  is shared in `host_tools::pipeline` (compile→link→install) + `host_tools::resolve`
   (compile-order); each binary is just its embedded `Seed` and CLI.
 - **`risc-core` PC-trace** (`src/risc.rs` `shim_run`): set `OBERON_TRACE=1` to dump
   the instruction count, a ring of the last instructions, and the registers when a run
@@ -275,7 +275,7 @@ OBERON_TRACE=1 target/release/eo-inner-run /tmp/eo-system <cmd>    # → trace o
 - `src/bin/build-eo-image.rs`: just the embedded EO `Seed` — `TOOLCHAIN`
   (glue + `VDisk` family + `eo/bootstrap` objects) + the golden `InnerCore` + the CLI.
   The pipeline (`build`, `NOREBO_MODULES`, the `.rsx`/link/install steps) lives in
-  `host_tools::image`; compile order in `host_tools::resolve`. Both shared with
+  `host_tools::pipeline`; compile order in `host_tools::resolve`. Both shared with
   `build-po-image`.
 - EO reference sources (`ob2txt`'d to `.txt`, regenerate with `target/debug/ob2txt`):
   `/tmp/eo-txt/{Modules,Kernel,Disk,Files,FileDir,Oberon}.Mod`. EO's `Modules.Load`

@@ -3,8 +3,8 @@
 //! The tools in this crate are separate `src/bin/` programs, but the heavy lifting
 //! they have in common lives here, so there is a single source of truth (and one
 //! set of tests) rather than a copy per binary that can quietly drift: the headless
-//! [`shim`] runtime, the compile-order [`resolve`]r, the disk-[`image`] build
-//! pipeline, the [`dsk`] image reader, the [`packonly`] manifest format, and the one
+//! [`shim`] runtime, the compile-order [`resolve`]r, the disk-image build
+//! [`pipeline`], the [`dsk`] image reader, the [`packonly`] manifest format, and the one
 //! low-level Oberon rule below. What stays per-binary is just the embedded toolchain
 //! seed and the CLI.
 
@@ -20,8 +20,8 @@ pub mod resolve;
 
 /// The disk-image build pipeline shared by `build-po-image` and `build-eo-image`:
 /// compile a source tree against an embedded toolchain, link a fresh inner core,
-/// and assemble a bootable `Oberon.dsk`. Each binary supplies only its [`image::Seed`].
-pub mod image;
+/// and assemble a bootable `Oberon.dsk`. Each binary supplies only its [`pipeline::Seed`].
+pub mod pipeline;
 
 /// A read-only reader for the Project Oberon on-disk filesystem — the inverse of the
 /// image builders: parse a `.dsk`/`RISC.img` straight into its files, no emulator.

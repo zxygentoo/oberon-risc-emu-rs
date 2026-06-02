@@ -40,6 +40,24 @@ fn iters(var: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
+/// The one intentional divergence (see DIVERGENCES.md / RISC5.v:139): a `MOV`
+/// with q=0, u=1, v=1 reads the flags byte, where our port emits the hardware's
+/// 0x50 and the C reference emits 0xD0. It cannot be oracled against C, so the
+/// differential tests steer around it (`mov_flags_read_is_hardware_0x50` pins the
+/// actual value).
+fn is_mov_flags_read(ir: u32) -> bool {
+    ir & 0x8000_0000 == 0        // register class
+        && (ir >> 16) & 0xF == 0 // MOV
+        && ir & 0x4000_0000 == 0 // q = 0
+        && ir & 0x2000_0000 != 0 // u = 1
+        && ir & 0x1000_0000 != 0 // v = 1
+}
+
+/// Branch class (register or immediate): top two opcode bits set.
+fn is_branch(ir: u32) -> bool {
+    ir & 0xC000_0000 == 0xC000_0000
+}
+
 /// Layer 1: software FP / idiv, live against C over the random `u32` space.
 #[test]
 fn fp_matches_c_live() {
@@ -90,21 +108,13 @@ fn single_instruction_matches_c() {
     let mut c = CRisc::new();
     let mut rs = Risc::new();
     let mut rng = Rng::new(0x1234_5678_9ABC_DEF0);
-    let n = iters("COSIM_INSN_ITERS", 200_000);
+    let n = iters("COSIM_INSN_ITERS", 5_000_000);
     let mut skipped = 0u32;
 
     for _ in 0..n {
         let ir = rng.u32();
-        // The one intentional divergence: MOV with q=0, u=1, v=1 reads the flags
-        // byte, where our port emits the hardware's 0x50 and the C reference
-        // emits 0xD0 (see DIVERGENCES.md / RISC5.v:139). It cannot be oracled
-        // against C, so skip it; mov_flags_read_is_hardware_0x50 guards it.
-        let is_mov_flags_read = ir & 0x8000_0000 == 0 // register class
-            && (ir >> 16) & 0xF == 0                  // MOV
-            && ir & 0x4000_0000 == 0                  // q = 0
-            && ir & 0x2000_0000 != 0                  // u = 1
-            && ir & 0x1000_0000 != 0; // v = 1
-        if is_mov_flags_read {
+        // Steer around the one expected divergence (see `is_mov_flags_read`).
+        if is_mov_flags_read(ir) {
             skipped += 1;
             continue;
         }
@@ -147,6 +157,95 @@ fn single_instruction_matches_c() {
          ({skipped} MOV-flags-read skipped as the one expected divergence)",
         n - skipped
     );
+}
+
+/// Layer 2b: random *multi-step* lockstep. Plant a region of random non-branch
+/// instructions, set random state, and run the stream — fetching and executing
+/// in sequence — comparing the full CPU state every step (and the region at the
+/// end). This reaches what the single-instruction sampler can't: instruction
+/// *streams* the boot never emits — back-to-back fetch/PC progression,
+/// store-then-load memory chains, and values/flags flowing between ops. Branches
+/// are left to layer 3 (real control flow) and the single-step sampler (their PC
+/// math in isolation); excluding them keeps PC marching through the planted
+/// region, and we stop the moment a self-modified word sends PC out of it, so we
+/// never fetch from the void or touch peripherals.
+#[test]
+fn burst_lockstep_matches_c() {
+    const REGION: usize = 64; // planted code words; also the per-burst step cap
+    let mut c = CRisc::new();
+    let mut rs = Risc::new();
+    let n = iters("COSIM_BURST_ITERS", 200_000);
+
+    for burst in 0..n {
+        // Per-burst seed: a failure is replayable from just the burst index.
+        let mut rng = Rng::new(0xB00B_5EED_0000_0000 ^ u64::from(burst));
+
+        let mut code = [0u32; REGION];
+        for w in &mut code {
+            // Random, but no branch (would leave the sandbox) and no flags-read.
+            *w = loop {
+                let ir = rng.u32();
+                if !is_branch(ir) && !is_mov_flags_read(ir) {
+                    break ir;
+                }
+            };
+        }
+        let mut st = [0u32; 19]; // PC = 0: start at the region origin
+        for s in st.iter_mut().skip(1).take(17) {
+            *s = rng.u32(); // R0..R15, H
+        }
+        st[18] = rng.u32() & 0xF; // flags
+
+        for (i, &val) in code.iter().enumerate() {
+            c.ram_write(i, val);
+            rs.cosim_ram_write(i, val);
+        }
+        c.set_state(&st);
+        rs.cosim_set_state(&st);
+
+        let mut pc = 0usize; // invariant: pc < REGION at the top of each step
+        for step in 0..REGION {
+            let insn = rs.cosim_ram_read(pc);
+            assert_eq!(
+                c.ram_read(pc),
+                insn,
+                "burst {burst} step {step}: RAM[{pc}] (next insn) diverged"
+            );
+            // A store may have written a flags-read into the path; neutralise it
+            // in place on both sides before it executes.
+            if is_mov_flags_read(insn) {
+                let patched = insn & !0x1000_0000; // clear v
+                c.ram_write(pc, patched);
+                rs.cosim_ram_write(pc, patched);
+            }
+
+            c.single_step();
+            rs.cosim_step();
+
+            let state = rs.cosim_dump_state();
+            assert_eq!(
+                state,
+                c.dump_state(),
+                "burst {burst} step {step}: CPU state diverged"
+            );
+
+            let next = state[0] as usize;
+            if next >= REGION {
+                break; // a self-modified branch left the sandbox — stop here
+            }
+            pc = next;
+        }
+
+        // Catch store-value divergences that never flowed back into a register.
+        for i in 0..REGION {
+            assert_eq!(
+                rs.cosim_ram_read(i),
+                c.ram_read(i),
+                "burst {burst}: RAM[{i}] diverged"
+            );
+        }
+    }
+    eprintln!("burst lockstep: {n} random bursts (up to {REGION} steps) matched C");
 }
 
 /// Layer 3: full-boot lockstep. Same deterministic schedule on both; assert the

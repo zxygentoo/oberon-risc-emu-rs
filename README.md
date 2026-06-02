@@ -2,7 +2,10 @@
 
 A Rust port of Peter De Wachter's [`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu) —
 an emulator for Niklaus Wirth's Project Oberon RISC5 machine. It boots a disk
-image to the interactive desktop.
+image to the interactive desktop. It can also extract the sources from an Oberon
+disk image and rebuild a bootable image from source — for both Project Oberon 2013
+and [Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended), with
+no FPGA, external Oberon, or C toolchain.
 
 ![Project Oberon (Oberon V5) desktop](po2013.png)
 
@@ -12,47 +15,69 @@ image to the interactive desktop.
 - **Workspace** — a dependency-light [`risc-core`](crates/risc-core) library
   (CPU, software FP, MMIO, disk, serial), the top-level `oberon-risc-emu`
   crate (the windowing frontend, which builds the `risc` executable you run),
-  and [`oberon-tools`](crates/oberon-tools): standalone host utilities for
+  and [`host-tools`](crates/host-tools): standalone host utilities for
   Oberon files.
 - **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
   live co-simulation — save one [documented divergence](DIVERGENCES.md).
 
-## Build
+## Requirements
+
+- **Rust** — a recent stable toolchain (`rustc` + `cargo`); install via
+  [rustup](https://rustup.rs). `cargo` builds everything, and the
+  [`Makefile`](Makefile) just wraps the common commands. There's no pinned MSRV,
+  but the dependencies track current stable.
+- **A display stack (for the GUI)** — the windowing frontend pulls
+  [`winit`](https://crates.io/crates/winit),
+  [`softbuffer`](https://crates.io/crates/softbuffer), and
+  [`arboard`](https://crates.io/crates/arboard); on Linux/BSD it needs the usual
+  X11 or Wayland client libraries (e.g. `libxkbcommon`), loaded at run time. The
+  [`host-tools`](crates/host-tools) CLIs are pure `std` — Rust is all they need.
+- **A C compiler (optional)** — only the `cosim` differential-testing feature
+  compiles C (see [Test](#test)); regular builds never invoke it.
+
+## Quickstart
+
+If you already have cargo installed and just want to play with the Oberon system, run:
 
 ```sh
-cargo build --release      # whole workspace
-cargo build -p risc-core   # core alone, no GUI/system libs
+make oberon
 ```
 
-The release build produces the emulator binary at `target/release/risc`. The
-examples below invoke it with `cargo run --release -- …`; once built you can run
-`target/release/risc …` directly (or `cargo install --path .` to put `risc` on
-your `PATH`).
+This builds the emulator and boots `Oberon-2020-08-18.dsk` from [`DiskImage/`](DiskImage).
 
-## Run
+## Other Make targets
 
-A disk image is bundled under [`DiskImage/`](DiskImage):
+A `Makefile` wraps Cargo for the common workflows:
 
-```sh
-cargo run --release -- DiskImage/Oberon-2020-08-18.dsk
-```
+| Command       | What it does                                                          |
+| ------------- | -------------------------------------------------------------------- |
+| `make`        | build the emulator → `target/release/risc`                           |
+| `make tools`  | build the host CLI tools → `target/release/`                         |
+| `make test`   | run the whole-workspace test suite                                    |
+| `make bench`  | run the render hot-path microbenchmark                                |
+| `make clean`  | `cargo clean`                                                         |
 
-- **Keyboard & mouse** — Oberon expects a US layout and a three-button mouse;
-  the left `Alt` key acts as the middle button. Hotkeys: `F12` /
-  `Ctrl+Shift+Delete` reset · `F11` / `Alt+Enter` fullscreen · `Alt+F4` quit.
-- We bundle one image; the original `oberon-risc-emu` repo has other dated
-  versions in [its `DiskImage/` directory](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage).
+`make oberon DISK=other.dsk` boots a different image; the upstream repo has
+[other dated versions](https://github.com/pdewacht/oberon-risc-emu/tree/master/DiskImage),
+and the [Extended Oberon repo](https://github.com/andreaspirklbauer/Oberon-extended)
+has a prebuilt one.
+
+## Controls
+
+Oberon expects a US keyboard layout and a three-button mouse; the left `Alt` key
+acts as the middle button. Hotkeys: `F12` / `Ctrl+Shift+Delete` reset · `F11` /
+`Alt+Enter` fullscreen · `Alt+F4` quit.
 
 ## Command line options
 
-`cargo run --release -- [OPTIONS] DISK-IMAGE` (or `target/release/risc [OPTIONS] DISK-IMAGE`):
+`./target/release/risc [OPTIONS] DISK-IMAGE`:
 
 - `--fullscreen` — start in fullscreen.
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
 
-`cargo run --release -- --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
+`./target/release/risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
 
 ## Transferring files
 
@@ -76,30 +101,56 @@ clipboard (via [`arboard`](https://crates.io/crates/arboard)). Middle-click:
 - `Clipboard.CopySelection` — copy the current text selection to the host.
 - `Clipboard.CopyViewer` — copy the focused viewer to the host.
 
-## Host file tools
+## Host tools
 
-The [`oberon-tools`](crates/oberon-tools) crate has two small, dependency-free
-command-line utilities for working with Oberon files on the host, ported from
-upstream's `tools/`:
+The [`host-tools`](crates/host-tools) crate bundles command-line tools for
+working with Oberon on the host. `ob2txt`/`txt2ob` convert Oberon source/text to and
+from host text and `extract-source` reads a disk image directly; `build-po-image`
+and `build-eo-image` run a headless Oberon on
+the `risc-core` CPU (a port of
+[`project-norebo`](https://github.com/pdewacht/project-norebo)) to build bootable
+Project Oberon 2013 and Extended Oberon images. Build them with `make tools`; the
+examples below run them straight from `target/release/`.
 
-- **`ob2unix`** — dump the plain-text content of an Oberon text: drops the
-  binary header and converts CR line endings to LF. Input that is not an Oberon
-  text passes through unchanged.
-
-  ```sh
-  cargo run -p oberon-tools --bin ob2unix < Input.Mod > input.txt
-  ```
-
-- **`asciidecoder`** — extract the files from an `AsciiCoder.DecodeFiles`
-  archive (the plain-text file encoding produced by Oberon's AsciiCoder). Reads
-  the archive from a file or stdin; `-v` lists each extracted name, `-C DIR`
-  sets the output directory.
+- **`ob2txt`** / **`txt2ob`** — convert Oberon source/text to and from readable
+  host text. Extracted Oberon files are plain Latin-1 with CR line endings;
+  `ob2txt A.Mod` writes `A.Mod.txt` (UTF-8/LF), and `txt2ob A.Mod.txt` converts it
+  back to `A.Mod`:
 
   ```sh
-  cargo run -p oberon-tools --bin asciidecoder -- -v -C outdir archive.txt
+  ./target/release/ob2txt A.Mod      # -> A.Mod.txt
+  ./target/release/txt2ob A.Mod.txt  # -> A.Mod
   ```
 
-Pass `--help` to either for full usage.
+- **`build-po-image`** — compile Project Oberon 2013 from a source tree and
+  assemble a bootable disk image (the Norebo toolchain is embedded). Fetch the
+  sources separately first, e.g. with project-norebo's `fetch-sources.py`:
+
+  ```sh
+  ./target/release/build-po-image path/to/sources out.dsk
+  ```
+
+  Files not meant to compile (data, reference modules) go in a required
+  `.packonly` manifest in the tree, which `extract-source` generates; custom
+  modules compile just by being present (see
+  [`crates/host-tools`](crates/host-tools)).
+
+- **`build-eo-image`** — the Extended Oberon counterpart: same pipeline and flags,
+  building a bootable EO desktop image from an EO source tree (see
+  [`crates/host-tools/BUILD-EO-IMAGE.md`](crates/host-tools/BUILD-EO-IMAGE.md)).
+
+  ```sh
+  ./target/release/build-eo-image path/to/eo-sources out.dsk
+  ```
+
+- **`extract-source`** — the inverse of the builders: extract the source files
+  from a disk image into a host directory (reads the Oberon filesystem directly;
+  no boot). Drops compiled `.rsc`/`.smb`, so the result feeds straight back into
+  `build-po-image` (or `build-eo-image`):
+
+  ```sh
+  ./target/release/extract-source Oberon.dsk out/
+  ```
 
 ## Known issues
 
@@ -124,6 +175,10 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" cargo test
 - **FP** — ~15k C-generated vectors (`crates/risc-core/tests/data/fp_vectors.txt`).
 - **Boot golden** — hashes the framebuffer + CPU state against C at fixed
   checkpoints; regenerated by the C harnesses in `crates/risc-core/tools/`.
+- **Image build** — `host-tools`' `build_po_image_round_trips_the_golden` extracts
+  the bundled image and rebuilds it, booting the result to that same golden hash.
+  It compiles all of Oberon through the shim, so it's `#[ignore]`d (run with
+  `cargo test -p host-tools --release -- --ignored`).
 - **Live co-simulation** — the `cosim` feature compiles the C reference and
   compares every FP/`idiv` result, a random instruction over random state, and a
   full-boot lockstep, frame by frame. Needs a C toolchain and the sibling C repo:
@@ -145,7 +200,7 @@ CI smoke checks and for regenerating golden hashes:
 
 ```sh
 # run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes
-cargo run --release -- headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
+./target/release/risc headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
 ```
 
 - `--frames N` — how many 60 Hz frames to boot (default 250).
@@ -158,6 +213,15 @@ It boots a throwaway copy of the image, so the original is left untouched.
 
 ## License
 
-MIT, matching upstream — see [LICENSE](LICENSE). The bundled `DiskImage/` image
-is Project Oberon system software (its authors' work, included from the upstream
-distribution) and is not covered by this repository's MIT license.
+[ISC](LICENSE) — the same license as the upstream
+[`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu) it ports
+(© Peter De Wachter) and Project Oberon itself, so the whole stack is uniform.
+
+Bundled third-party material keeps its own upstream copyright (also ISC):
+
+- `DiskImage/` — Project Oberon 2013 system software (its authors' work, from the
+  upstream distribution);
+- `crates/host-tools/assets/` — host glue and prebuilt bootstrap objects for the
+  image builders, vendored from [`project-norebo`](https://github.com/pdewacht/project-norebo)
+  and [Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended); both
+  derive from Project Oberon 2013 (see [`README.md`](crates/host-tools/assets/README.md)).

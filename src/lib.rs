@@ -1,12 +1,12 @@
-//! `oberon-risc-emu`: the windowed frontend (winit + softbuffer) and the `risc`
-//! binary for the Project Oberon RISC5 emulator.
-//!
-//! The pure machine — CPU, software FP, MMIO, disk, serial, clipboard bridge —
-//! lives in the [`risc_core`] crate. This crate adds the window, 60 fps clock
-//! loop, 1-bit→ARGB rendering, input/PS-2 handling, CLI, and a deterministic
-//! headless runner.
+//! `oberon-risc-emu`: pixel-scaling helpers for the windowed frontend, exposed
+//! as a library only so the `render` benchmark — a separate Cargo target, which
+//! can link a library but not a binary — can reach them. The actual `risc`
+//! frontend (window, clock loop, CLI, input, clipboard) lives in the binary,
+//! `src/main.rs` and its sibling modules; the pure machine is in the
+//! [`risc_core`] crate.
 
 #![deny(unsafe_code)]
 
-pub mod error;
-pub mod frontend;
+// `pub` for the `render` benchmark only (see the crate docs); not a real API.
+#[doc(hidden)]
+pub mod render;

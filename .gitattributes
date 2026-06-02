@@ -1,0 +1,5 @@
+# Vendored Project Oberon / Norebo / Extended Oberon toolchain assets are embedded
+# byte-for-byte via include_bytes! (and the .Mod sources use CRLF). Mark the whole
+# assets tree -text so git never normalizes line endings, keeping the image builds
+# (build-po-image, build-eo-image) bit-reproducible.
+crates/host-tools/assets/** -text

@@ -215,6 +215,11 @@ pub struct Risc {
     spi: [Option<Box<dyn Spi>>; 4],
     clipboard: Option<Box<dyn Clipboard>>,
 
+    // When set, the machine runs in headless "shim" mode: the MMIO region is
+    // routed to this host (host file syscalls + stdio) instead of the FPGA
+    // device map, and it boots from an inner-core image (see `boot_inner_core`).
+    shim: Option<Box<crate::shim::Host>>,
+
     fb_width: i32,  // words
     fb_height: i32, // lines
     damage: Damage,
@@ -247,6 +252,7 @@ impl Risc {
             spi_selected: 0,
             spi: [None, None, None, None],
             clipboard: None,
+            shim: None,
             fb_width,
             fb_height,
             damage: Damage {
@@ -328,6 +334,142 @@ impl Risc {
     /// Reset: jump to the boot ROM. Port of `risc_reset`.
     pub fn reset(&mut self) {
         self.pc = ROM_START / 4;
+    }
+
+    /// Reconfigure as a headless "shim" machine: `mem_bytes` of flat RAM with
+    /// no framebuffer carve-out (every below-`mem_bytes` access is plain RAM,
+    /// the MMIO region stays at the top). Used by the image-build toolchain.
+    pub(crate) fn configure_shim(&mut self, mem_bytes: u32) {
+        self.mem_size = mem_bytes;
+        self.display_start = mem_bytes;
+        self.ram = vec![0u32; (mem_bytes / 4) as usize];
+    }
+
+    /// Attach the shim host backend (file syscalls + stdio). While set, the
+    /// MMIO region routes to it. Port of `norebo.c`'s I/O dispatch.
+    pub(crate) fn set_shim(&mut self, host: Box<crate::shim::Host>) {
+        self.shim = Some(host);
+    }
+
+    /// Load an inner-core image into RAM and set up the boot registers,
+    /// mirroring `norebo.c`'s `load_inner_core` + `main`. The image is a sequence
+    /// of little-endian `(len, addr, bytes[len])` records terminated by `len == 0`.
+    /// Call [`Self::configure_shim`] first.
+    ///
+    /// # Errors
+    /// Returns an error if the image is truncated or a record falls outside RAM.
+    pub(crate) fn boot_inner_core(&mut self, image: &[u8], stack_org: u32) -> Result<(), String> {
+        let read_u32 = |at: usize| -> Option<u32> {
+            image
+                .get(at..at + 4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        };
+        let mut p = 0usize;
+        loop {
+            let len = read_u32(p).ok_or("inner core: truncated length")?;
+            p += 4;
+            if len == 0 {
+                break;
+            }
+            let adr = read_u32(p).ok_or("inner core: truncated address")?;
+            p += 4;
+            let end = p + len as usize;
+            let bytes = image.get(p..end).ok_or("inner core: truncated data")?;
+            if u64::from(adr) + u64::from(len) > u64::from(self.mem_size) {
+                return Err(format!(
+                    "inner core record at {adr:#x} (+{len}) exceeds {} bytes of RAM",
+                    self.mem_size
+                ));
+            }
+            for (i, &byte) in bytes.iter().enumerate() {
+                let a = adr + i as u32;
+                let wi = (a / 4) as usize;
+                let shift = (a % 4) * 8;
+                self.ram[wi] = (self.ram[wi] & !(0xFFu32 << shift)) | (u32::from(byte) << shift);
+            }
+            p = end;
+        }
+        self.ram[3] = self.mem_size; // MEM[12]: memory limit
+        self.ram[6] = stack_org; // MEM[24]: stack origin
+        self.pc = 0;
+        self.r = [0u32; 16];
+        self.r[12] = 0x20;
+        self.r[14] = stack_org;
+        self.h = 0;
+        self.flags = Flags::empty();
+        Ok(())
+    }
+
+    /// Run in shim mode until the host halts (syscall 1 / a trap) and return its
+    /// process-style exit code. Requires [`Self::set_shim`] + [`Self::boot_inner_core`].
+    /// Guarded by a large instruction budget so a runaway image can't hang forever.
+    ///
+    /// Set `OBERON_TRACE` in the environment to dump the total instruction count,
+    /// a ring of the last instructions, and the registers when the run ends by
+    /// leaving RAM or exhausting the budget — the inner-core bring-up aid for
+    /// mapping a bad branch back to a module via the core layout.
+    pub(crate) fn shim_run(&mut self) -> i32 {
+        const RING: usize = 256;
+        let trace = std::env::var_os("OBERON_TRACE").is_some();
+        let mut ring = [(0u32, 0u32); RING];
+        let (mut ri, mut steps): (usize, u64) = (0, 0);
+        let mut budget: u64 = 64_000_000_000;
+        loop {
+            if let Some(code) = self.shim.as_ref().and_then(|h| h.exit_code()) {
+                return code;
+            }
+            if self.pc >= self.mem_size / 4 {
+                eprintln!("shim: PC left RAM (0x{:08X})", self.pc.wrapping_mul(4));
+                if trace {
+                    self.dump_trace(&ring, ri, steps);
+                }
+                return 1;
+            }
+            if budget == 0 {
+                eprintln!("shim: instruction budget exhausted");
+                if trace {
+                    self.dump_trace(&ring, ri, steps);
+                }
+                return 1;
+            }
+            budget -= 1;
+            if trace {
+                let ir = self.ram[self.pc as usize];
+                ring[ri] = (self.pc.wrapping_mul(4), ir);
+                ri = (ri + 1) % RING;
+                steps += 1;
+                // A bare 0 word is never emitted into a live instruction stream, so
+                // executing one means we fell into zeroed memory off a wild branch.
+                // Dump here: the ring still holds the branch that sent us there.
+                if ir == 0 {
+                    eprintln!(
+                        "shim: executed zero instruction at 0x{:08X} (wild branch target)",
+                        self.pc.wrapping_mul(4)
+                    );
+                    self.dump_trace(&ring, ri, steps);
+                    return 1;
+                }
+            }
+            self.single_step();
+        }
+    }
+
+    /// Dump the trace ring (oldest→newest, byte-PC + instruction word), the
+    /// register file, and the total step count to stderr. See [`Self::shim_run`].
+    fn dump_trace(&self, ring: &[(u32, u32)], next: usize, steps: u64) {
+        let n = (steps as usize).min(ring.len());
+        eprintln!("shim: {steps} instruction(s) executed; last {n} (PC: IR):");
+        for k in 0..n {
+            let (pc, ir) = ring[(next + ring.len() - n + k) % ring.len()];
+            eprintln!("  {pc:08X}: {ir:08X}");
+        }
+        for i in 0..16 {
+            eprint!("  R{i:<2}={:08X}", self.r[i as usize]);
+            if i % 4 == 3 {
+                eprintln!();
+            }
+        }
+        eprintln!("  PC ={:08X}", self.pc.wrapping_mul(4));
     }
 
     /// Run up to `cycles` instructions, stopping early when the CPU is detected
@@ -565,6 +707,11 @@ impl Risc {
     // Keep each offset's logic in its own arm, mirroring the C's switch.
     #[allow(clippy::collapsible_match)]
     fn load_io(&mut self, address: u32) -> u32 {
+        // Shim mode: route the whole MMIO region to the host. (A load never reaches
+        // into guest memory — only a store can, via a syscall; see `store_io`.)
+        if let Some(host) = self.shim.as_mut() {
+            return host.load(address.wrapping_sub(IO_START));
+        }
         match address.wrapping_sub(IO_START) {
             0 => {
                 // Millisecond counter.
@@ -610,6 +757,12 @@ impl Risc {
     }
 
     fn store_io(&mut self, address: u32, value: u32) {
+        // Shim mode: a store can trigger a syscall that touches guest memory —
+        // disjoint field borrows of `shim` and `ram` let the host reach it.
+        if let Some(host) = self.shim.as_mut() {
+            host.store(address.wrapping_sub(IO_START), value, &mut self.ram);
+            return;
+        }
         match address.wrapping_sub(IO_START) {
             4 => {
                 // LED control.

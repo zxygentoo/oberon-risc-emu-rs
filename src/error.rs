@@ -1,11 +1,10 @@
 //! Typed errors for the emulator frontend.
 //!
 //! The pure-core devices keep returning `std::io::Result` (a file-backed disk or
-//! serial line has no richer failure mode), so this aggregate [`Error`] is what
-//! the windowed `risc` binary surfaces to the user. It is only compiled with the
-//! `frontend` feature — its [`Error::Window`] variant wraps a `winit` error, and
-//! it is the sole consumer — keeping the `--no-default-features` core build
-//! dependency-free.
+//! serial line has no richer failure mode), so this aggregate [`enum@Error`] is what
+//! the windowed `risc` binary surfaces to the user — its [`Error::Window`] variant
+//! wraps a `winit` error. The dependency-light machine itself lives in the
+//! separate `risc-core` crate.
 
 use thiserror::Error;
 

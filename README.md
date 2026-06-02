@@ -20,6 +20,21 @@ no FPGA, external Oberon, or C toolchain.
 - **Bit-exact to the C reference** — FP vectors, a C-derived boot golden, and
   live co-simulation — save one [documented divergence](DIVERGENCES.md).
 
+## Requirements
+
+- **Rust** — a recent stable toolchain (`rustc` + `cargo`); install via
+  [rustup](https://rustup.rs). `cargo` builds everything, and the
+  [`Makefile`](Makefile) just wraps the common commands. There's no pinned MSRV,
+  but the dependencies track current stable.
+- **A display stack (for the GUI)** — the windowing frontend pulls
+  [`winit`](https://crates.io/crates/winit),
+  [`softbuffer`](https://crates.io/crates/softbuffer), and
+  [`arboard`](https://crates.io/crates/arboard); on Linux/BSD it needs the usual
+  X11 or Wayland client libraries (e.g. `libxkbcommon`), loaded at run time. The
+  [`host-tools`](crates/host-tools) CLIs are pure `std` — Rust is all they need.
+- **A C compiler (optional)** — only the `cosim` differential-testing feature
+  compiles C (see [Test](#test)); regular builds never invoke it.
+
 ## Quickstart
 
 If you already have cargo installed and just want to play with the Oberon system, run:

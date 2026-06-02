@@ -1,20 +1,24 @@
 //! `extract-source` — extract the source files from a Project Oberon `.dsk`
 //! image into a host directory: every file *except* the compiled artifacts
-//! (`.rsc` object code and `.smb` symbol files), which `build-image` regenerates
-//! from source anyway. The result is a build-ready tree — edit it and feed it
-//! straight back to [`build-image`](../build-image).
+//! (`.rsc` object code and `.smb` symbol files), which the image builders
+//! regenerate from source anyway. The result is a build-ready tree — edit it and
+//! feed it straight back to [`build-po-image`](../build-po-image) (or `build-eo-image`).
 //!
-//! It also writes the `.packonly` manifest `build-image` requires, derived from
+//! It also writes the `.packonly` manifest the builders require, derived from
 //! the image: a source `X.Mod` is a compile candidate when the image carries its
 //! `X.rsc` object, and every other extracted file (data, plus reference modules
 //! that ship as source with no object) is recorded as pack-only.
 //!
-//! It reads the Oberon on-disk filesystem directly (see [`dsk`]); no emulator, no
+//! It reads the Oberon on-disk filesystem directly (see [`image`]); no emulator, no
 //! boot. Usage: `extract-source <DISK_IMAGE> <OUTPUT_DIR>`.
 //!
+//! By default the compiled artifacts are skipped; pass `--keep-objects` to also
+//! extract them, to harvest a compiler/toolchain *seed* from a prebuilt image
+//! (e.g. Extended Oberon's `RISC.img`).
+//!
 //! Extracted files are byte-for-byte as stored. Oberon sources (`*.Mod`,
-//! `*.Tool`, `*.Text`) are "Oberon Text", not plain UTF-8; pipe them through
-//! [`ob2unix`](../ob2unix) to read them as plain text.
+//! `*.Tool`, `*.Text`) are plain Latin-1 with CR line endings; run them through
+//! [`ob2txt`](../ob2txt) to read them as host (UTF-8/LF) text.
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,20 +27,19 @@ use std::{fs, io};
 
 use clap::Parser;
 
-mod dsk;
-use dsk::Image;
+use host_tools::image::Image;
 
 /// The `.packonly` manifest section appended to `--help`.
 const PACKONLY_HELP: &str = "\
 The .packonly manifest:
-  extract-source also writes `.packonly` into OUTPUT_DIR: the manifest build-image
-  uses to tell source from data. A source X.Mod is a compile candidate when the
+  extract-source also writes `.packonly` into OUTPUT_DIR: the manifest the
+  builders use to tell source from data. A source X.Mod is a compile candidate when the
   image carries its X.rsc object; every other extracted file (data, and reference
   modules shipped as source with no object) is recorded as pack-only.
 
   One file name per line; blank lines and `#` comments are ignored; an empty list
-  means build-image compiles everything. The tree feeds straight back into
-  build-image.";
+  means the builders compile everything. The tree feeds straight back into
+  build-po-image (or build-eo-image).";
 
 /// Extract the source files from a Project Oberon `.dsk` image.
 ///
@@ -53,6 +56,13 @@ struct Cli {
     /// Directory to extract the sources into (created if needed)
     #[arg(value_name = "OUTPUT_DIR")]
     output: PathBuf,
+
+    /// Also extract compiled objects (`.rsc`) and symbol files (`.smb`), which are
+    /// skipped by default. Use this to harvest a toolchain *seed* from a prebuilt
+    /// image (e.g. Extended Oberon's `RISC.img`). The result is seed material, not
+    /// a tree to feed back into the builders — kept objects would shadow a rebuild.
+    #[arg(long)]
+    keep_objects: bool,
 }
 
 fn main() {
@@ -63,7 +73,7 @@ fn main() {
     }
 }
 
-/// A compiled artifact that `build-image` regenerates from source — and that, if
+/// A compiled artifact that the image builders regenerate from source — and that, if
 /// kept, shadows the freshly built one and breaks a rebuild — so we skip it.
 fn is_compiled(name: &str) -> bool {
     matches!(
@@ -85,9 +95,9 @@ fn run(cli: &Cli) -> io::Result<()> {
         .collect();
 
     let mut packonly = BTreeSet::new();
-    let (mut extracted, mut skipped) = (0usize, 0usize);
+    let (mut extracted, mut skipped, mut objects) = (0usize, 0usize, 0usize);
     for e in &entries {
-        if is_compiled(&e.name) {
+        if is_compiled(&e.name) && !cli.keep_objects {
             skipped += 1;
             continue;
         }
@@ -100,8 +110,12 @@ fn run(cli: &Cli) -> io::Result<()> {
                 write_file(&cli.output, &e.name, &data)?;
                 extracted += 1;
                 // Record pack-only only once the file is actually written, so the
-                // manifest never names a file we failed to extract.
-                if !is_module_source {
+                // manifest never names a file we failed to extract. Compiled objects
+                // (present only with --keep-objects) are seed material, not pack-only
+                // data, so they stay off the manifest.
+                if is_compiled(&e.name) {
+                    objects += 1;
+                } else if !is_module_source {
                     packonly.insert(e.name.clone());
                 }
             }
@@ -110,15 +124,20 @@ fn run(cli: &Cli) -> io::Result<()> {
         }
     }
 
-    // The manifest is required by build-image and always regenerated, so the tree
+    // The manifest is required by the builders and always regenerated, so the tree
     // is build-ready as-is (an empty list — every module compiled — still writes).
     fs::write(
         cli.output.join(".packonly"),
         host_tools::packonly::render(&packonly),
     )?;
 
+    let tail = if cli.keep_objects {
+        format!("kept {objects} .rsc/.smb objects")
+    } else {
+        format!("skipped {skipped} compiled .rsc/.smb")
+    };
     println!(
-        "extracted {extracted} source files to {} ({} pack-only; skipped {skipped} compiled .rsc/.smb)",
+        "extracted {extracted} files to {} ({} pack-only; {tail})",
         cli.output.display(),
         packonly.len(),
     );
@@ -126,7 +145,7 @@ fn run(cli: &Cli) -> io::Result<()> {
 }
 
 /// Write one extracted file into `dir`. Rejects any name that doesn't resolve to
-/// a direct child of `dir` — defense in depth on top of [`dsk`]'s name validation.
+/// a direct child of `dir` — defense in depth on top of [`image`]'s name validation.
 fn write_file(dir: &Path, name: &str, data: &[u8]) -> io::Result<()> {
     let path = dir.join(name);
     if path.parent() != Some(dir) {

@@ -16,12 +16,14 @@ all:
 oberon:
 	$(CARGO) run --release -- $(DISK)
 
-# Host tools -> target/release/{ob2unix,asciidecoder,build-image,extract-source}
+# Host tools -> target/release/ (ob2txt, txt2ob, extract-source,
+# build-po-image, build-eo-image, eo-driver, eo-inner-run)
 tools:
 	$(CARGO) build --release -p host-tools
 	@echo
 	@echo "  ✓ tools built → target/release/"
-	@echo "      ob2unix  asciidecoder  build-image  extract-source"
+	@echo "      ob2txt  txt2ob  extract-source"
+	@echo "      build-po-image  build-eo-image  eo-driver  eo-inner-run"
 
 # Whole-workspace test suite.
 test:

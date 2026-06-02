@@ -3,23 +3,29 @@ name = "host-tools"
 version = "0.1.0"
 edition = "2021"
 license = "ISC"
-description = "Host-side Oberon tools: text/archive converters and a Project Oberon disk-image builder and source extractor"
+description = "Host-side Oberon tools: text/archive converters, source extractor, and bootable disk-image builders for Project Oberon 2013 and Extended Oberon"
 
 # CLI tools, auto-discovered from src/bin/:
-#   ob2unix        - dump the plain-text content of an Oberon Text file
-#   asciidecoder   - unpack an 'AsciiCoder.DecodeFiles' archive
-#   build-image    - compile Project Oberon and assemble a runnable disk image
-#   extract-source - extract the source files from a Project Oberon disk image
-# All are pure std except build-image, which uses the headless "shim" runtime in
-# src/bin/build-image/shim.rs (a Rust port of project-norebo) on the risc-core CPU.
+#   ob2txt         - convert an Oberon source/text file to host text (<FILE>.txt)
+#   txt2ob         - convert host text back to Oberon format (inverse of ob2txt)
+#   build-po-image - compile Project Oberon 2013 and assemble a bootable disk image
+#   build-eo-image - the Extended Oberon counterpart of build-po-image
+#   extract-source - extract the source tree from an Oberon disk image
+#   eo-driver      - dev tool: boot an EO image headless, drive + observe it
+#   eo-inner-run   - dev tool: boot an InnerCore under the shim, run one command
+# Pure std except the image builders, eo-inner-run, and eo-driver, which run on the
+# risc-core CPU: the builders + eo-inner-run via the headless "shim" runtime
+# (src/shim.rs, a Rust port of project-norebo); eo-driver by booting the full system.
 #
-# src/lib.rs holds the handful of Oberon rules the binaries must agree on (the
-# file-name character set today), so the per-binary copies can't drift.
+# The shared build pipeline lives in src/image.rs and the compile-order logic in
+# src/resolve.rs; src/lib.rs holds the low-level Oberon rules all the tools must
+# agree on — so the per-binary code is just the embedded seed and the CLI.
 
 [dependencies]
-# CLI parsing for all four tools (clap 4 derive is already used by the `risc` frontend).
+# CLI parsing for every tool (clap 4 derive is already used by the `risc` frontend).
 clap = { version = "4", features = ["derive"] }
-# Used only by build-image (via its shim module); the file converters don't.
+# Used by the image builders (via src/image.rs + the shim) and eo-driver; the file
+# converters and extract-source don't need it.
 risc-core = { path = "../risc-core" }
 
 [lints]

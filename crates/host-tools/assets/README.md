@@ -1,23 +1,47 @@
 # Vendored toolchain assets
 
 These files are vendored from Peter De Wachter's
-[project-norebo](https://github.com/pdewacht/project-norebo) and embedded into the
-`build-image` binary (via `include_bytes!`) so it can build a Project Oberon disk
-image without an external checkout:
+[project-norebo](https://github.com/pdewacht/project-norebo) and from
+[Extended Oberon](https://github.com/andreaspirklbauer/Oberon-extended) (Andreas Pirklbauer),
+and embedded into the `build-po-image` / `build-eo-image` binaries (via
+`include_bytes!`) so they can build a bootable disk image without an external
+checkout.
 
-- `Norebo/` — the Norebo host-side Oberon modules (`Kernel`, `Files`, `Oberon`,
-  `FileDir`, `CoreLinker`, `VDisk`, `VFileDir`, `VFiles`, `VDiskUtil`, `Norebo`),
-  which talk to the Norebo syscalls instead of FPGA hardware.
-- `Bootstrap/` — prebuilt `.rsc` objects and the `InnerCore` image that seed the
-  first compile (you need a working Oberon to compile Oberon).
+A build's *toolchain seed* is the host-side glue (Oberon modules adapted to talk to
+the host filesystem instead of FPGA hardware) plus the prebuilt objects that seed
+the first compile — you need a working Oberon to compile Oberon. The layout splits
+the glue into what the two systems share and what is system-specific:
 
-They derive from Project Oberon 2013; the upstream Wirth sources proper are *not*
-vendored — they are fetched separately into the `sources_dir` passed to `build-image`.
+```
+common/        host glue shared by both builders, byte-for-byte:
+               Norebo, FileDir, Files, VDisk, VFileDir, VFiles, VDiskUtil
+po/
+  glue/        Project Oberon 2013 glue: Kernel, Oberon, CoreLinker
+  bootstrap/   prebuilt .rsc objects + the InnerCore image (PO2013)
+eo/
+  glue/        Extended Oberon glue: Kernel, Disk, Oberon, CoreLinker
+  bootstrap/   prebuilt .rsc objects + the Modules-topped InnerCore (EO)
+```
+
+- **`common/`** — the `.Mod` glue both builders embed unchanged. The on-disk
+  filesystem format is identical between PO2013 and EO, so `FileDir`/`Files` and
+  the `VDisk` family compile against either system's glue.
+- **`po/glue/`**, **`eo/glue/`** — the system-specific glue (`Kernel`, `Oberon`,
+  `CoreLinker`, plus EO's `Disk`). `eo/glue/Disk.Mod` is **not** embedded in
+  `build-eo-image`; it is used only when regenerating the EO seed against the live
+  EO emulator (see [`../BUILD-EO-IMAGE.md`](../BUILD-EO-IMAGE.md)).
+- **`*/bootstrap/`** — prebuilt `.rsc` objects and the `InnerCore` image that seed
+  the first compile. Each `InnerCore` is also the *golden* image its builder
+  re-links during the build and checks byte-for-byte.
+
+The upstream Wirth/Pirklbauer sources proper are *not* vendored here — they are
+fetched separately into the `sources_dir` passed to the builders.
 
 This material is under the **ISC license**, the same license as this repository,
 but the copyright is held upstream. The Norebo-specific modules and build tooling
-are © Peter De Wachter (project-norebo); they derive from Project Oberon 2013, whose
-notice — reproduced here as the license requires — is:
+are © Peter De Wachter (project-norebo); the Extended Oberon modules are © Andreas
+Pirklbauer; both derive from Project Oberon 2013, whose notice — reproduced here as
+the license requires — is:
 
 ```
 Project Oberon, Revised Edition 2013

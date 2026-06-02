@@ -3,19 +3,23 @@
 //! parses the directory B-tree and reconstructs file contents straight from the
 //! image bytes; no emulator, no boot.
 //!
-//! Layout (see `assets/Norebo/VFileDir.Mod`): the image is a flat array of
+//! Layout (see `assets/common/VFileDir.Mod`): the image is a flat array of
 //! 1024-byte sectors, with sector `s` at byte offset `(s - 1) * 1024` and on-disk
 //! pointers stored as `DiskAdr = s * 29`. The directory is a B-tree rooted at
 //! `DiskAdr` 29 (sector 1); each file's first sector is a header holding its name,
 //! length, and the table of data-sector addresses. Files up to 64 pages live in
 //! the header's `sec` table; larger ones spill into index sectors via `ext`.
+//!
+//! A raw `.dsk` holds that sector array from byte 0; a full SD-card image (the
+//! `RISC.img` Extended Oberon and the FPGA install ship) places it behind a fixed
+//! prefix. The filesystem start is detected from where the root `DirMark` lands.
 
 use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::Path;
 
-use host_tools::name_char_ok;
+use risc_core::name_char_ok;
 
 // Constants from `FileDir.Mod`.
 const SECTOR_SIZE: usize = 1024;
@@ -28,6 +32,11 @@ const DIR_ROOT_ADR: u32 = 29; // sector 1
 const DIR_PG_SIZE: usize = 24;
 const DIR_MARK: u32 = 0x9B1E_A38D;
 const HEADER_MARK: u32 = 0x9BA7_1D86;
+
+// Byte offset of the filesystem in a full SD-card image: 0x80002 blocks of 512
+// bytes = 256 MiB + 1 KiB — the same base the emulator's `disk.rs` rebases by. A
+// raw `.dsk` instead starts at 0; `from_bytes` probes both.
+const SD_FS_OFFSET: usize = 0x1000_0400;
 
 // Field byte offsets within a file header sector. (The name lives at offset 4,
 // but the reader takes names from the directory, so it isn't needed here.)
@@ -48,9 +57,12 @@ pub struct Entry {
     pub header: u32,
 }
 
-/// A `.dsk` image held in memory, read only.
+/// An Oberon filesystem image held in memory, read only.
 pub struct Image {
     data: Vec<u8>,
+    /// Byte offset of the filesystem within `data`: 0 for a raw `.dsk`, or
+    /// `SD_FS_OFFSET` for a full SD-card image.
+    base: usize,
 }
 
 impl Image {
@@ -64,14 +76,16 @@ impl Image {
     }
 
     fn from_bytes(data: Vec<u8>) -> io::Result<Image> {
-        let img = Image { data };
-        // Sector 1 (offset 0) must be the directory's root page.
-        if rd_u32(&img.sector(DIR_ROOT_ADR)?, 0) != DIR_MARK {
-            return Err(bad(
-                "not an Oberon filesystem image (no directory mark at sector 1)",
-            ));
-        }
-        Ok(img)
+        // The directory root (DiskAdr 29 = sector 1) sits at the very start of the
+        // filesystem region. Locate that region by where its DirMark lands: byte 0
+        // for a raw `.dsk`, or behind the prefix for a full SD-card image.
+        let base = [0, SD_FS_OFFSET]
+            .into_iter()
+            .find(|&b| has_dir_mark(&data, b))
+            .ok_or_else(|| {
+                bad("not an Oberon filesystem image (no directory mark at sector 1)")
+            })?;
+        Ok(Image { data, base })
     }
 
     /// Every file in the directory, in name order.
@@ -143,7 +157,7 @@ impl Image {
         if s == 0 {
             return Err(bad("invalid disk address 0"));
         }
-        let off = (s - 1) * SECTOR_SIZE;
+        let off = self.base + (s - 1) * SECTOR_SIZE;
         let slice = self
             .data
             .get(off..off + SECTOR_SIZE)
@@ -189,6 +203,15 @@ fn rd_u32(buf: &[u8], off: usize) -> u32 {
 
 fn rd_i32(buf: &[u8], off: usize) -> i32 {
     rd_u32(buf, off) as i32
+}
+
+/// Whether the four bytes at `off` are the directory `DirMark` (bounds-checked,
+/// so an out-of-range `off` is simply `false` rather than a panic).
+fn has_dir_mark(data: &[u8], off: usize) -> bool {
+    matches!(
+        data.get(off..off + 4),
+        Some(b) if u32::from_le_bytes([b[0], b[1], b[2], b[3]]) == DIR_MARK
+    )
 }
 
 /// Decode a 32-byte name field, enforcing the Oberon character set (a letter,
@@ -339,6 +362,15 @@ mod tests {
     fn rejects_a_non_filesystem_image() {
         let err = Image::from_bytes(vec![0u8; SECTOR_SIZE]).err().unwrap();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn has_dir_mark_finds_the_mark_and_tolerates_out_of_range() {
+        let mut d = vec![0u8; 16];
+        d[4..8].copy_from_slice(&DIR_MARK.to_le_bytes());
+        assert!(has_dir_mark(&d, 4));
+        assert!(!has_dir_mark(&d, 0)); // zeros
+        assert!(!has_dir_mark(&d, 14)); // past the end -> false, no panic
     }
 
     #[test]

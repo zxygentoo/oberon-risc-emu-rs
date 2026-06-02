@@ -1,4 +1,4 @@
-//! Decide which files in a source tree `build-image` compiles, and in what order.
+//! Decide which files in a source tree the image builders compile, and in what order.
 //!
 //! The rule is deliberately simple and unambiguous: every file is compiled as
 //! Oberon source *except* those named in the tree's `.packonly` manifest, which
@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::{fs, io};
 
-use host_tools::packonly;
+use crate::packonly;
 
 /// A source file to compile, with the module it declares. Objects are named by
 /// the module, not the file (`Display.Orig.Mod` would emit `Display.rsc`), so we
@@ -278,7 +278,12 @@ mod tests {
 
     fn nodes(spec: &[(&str, &[&str])]) -> Vec<(String, Vec<String>)> {
         spec.iter()
-            .map(|(n, deps)| (n.to_string(), deps.iter().copied().map(String::from).collect()))
+            .map(|(n, deps)| {
+                (
+                    n.to_string(),
+                    deps.iter().copied().map(String::from).collect(),
+                )
+            })
             .collect()
     }
 

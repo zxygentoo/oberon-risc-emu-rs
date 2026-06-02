@@ -528,11 +528,12 @@ mod tests {
     #[test]
     fn shimmem_write_byte_preserves_neighbors() {
         let mut ram = vec![0xFFFF_FFFFu32];
-        let mut mem = ShimMem::new(&mut ram);
-        mem.write_byte(2, 0x00); // clear only the third byte
-        assert_eq!(mem.read_byte(2), 0x00);
-        assert_eq!(mem.read_byte(3), 0xFF);
-        drop(mem);
+        {
+            let mut mem = ShimMem::new(&mut ram);
+            mem.write_byte(2, 0x00); // clear only the third byte
+            assert_eq!(mem.read_byte(2), 0x00);
+            assert_eq!(mem.read_byte(3), 0xFF);
+        }
         assert_eq!(ram[0], 0xFF00_FFFF);
     }
 

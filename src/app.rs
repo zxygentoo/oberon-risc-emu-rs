@@ -1,7 +1,9 @@
-//! The windowed application: window, 60 fps clock loop, render, and input
-//! dispatch (port of `sdl-main.c`).
+//! The application: machine + device wiring shared by both frontends, the
+//! windowed app (window, 60 fps clock loop, render, and input dispatch — port
+//! of `sdl-main.c`), and the `--headless` runner.
 
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -31,19 +33,30 @@ const FPS: u32 = 60;
 type SbContext = softbuffer::Context<Rc<Window>>;
 type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
-/// Parse args, build the core + devices, and run the GUI. Entry point for the
-/// `risc` binary.
+/// Parse args, build the core + devices, and run the GUI (or, with
+/// `--headless`, the windowless frame loop). Entry point for the `risc` binary.
 pub fn run() -> Result<()> {
     use clap::Parser;
-    let cli = cli::Cli::parse();
-    if let Some(cli::Command::Headless(args)) = &cli.command {
-        return run_headless(args);
+    let cfg = cli::Cli::parse().into_config()?;
+    if cfg.headless {
+        return run_headless(&cfg);
     }
-    let cfg = cli.into_config()?;
 
+    let risc = build_machine(&cfg, cfg.disk_image.as_deref())?;
+    let event_loop = EventLoop::new()?;
+    let mut app = App::new(risc, cfg);
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+/// Build the core and wire its devices from the validated `Config`, with
+/// `disk_path` as the SPI disk — shared by the windowed and headless paths so
+/// every option composes with both.
+fn build_machine(cfg: &cli::Config, disk_path: Option<&Path>) -> Result<Box<Risc>> {
     let mut risc = Box::new(Risc::new());
 
-    // Default devices, as the C frontend wires them: PCLink serial + clipboard.
+    // Default devices, as the C frontend wires them: PCLink serial + clipboard
+    // (arboard degrades to a no-op where no host clipboard is reachable).
     risc.set_serial(Box::new(PcLink::new()));
     risc.set_clipboard(Box::new(ClipboardBridge::new(Box::new(
         ArboardClipboard::new(),
@@ -61,14 +74,12 @@ pub fn run() -> Result<()> {
 
     // The disk is the SPI slave at index 1; a diskless card allows
     // --boot-from-serial.
-    let disk = Disk::new(cfg.disk_image.as_deref())?;
-    risc.set_spi(1, Box::new(disk));
+    risc.set_spi(1, Box::new(Disk::new(disk_path)?));
 
     // --serial-in/--serial-out replace PCLink with a raw host serial line.
     if cfg.serial_in.is_some() || cfg.serial_out.is_some() {
         #[cfg(unix)]
         {
-            use std::path::Path;
             let in_path = cfg.serial_in.as_deref().unwrap_or("/dev/null");
             let out_path = cfg.serial_out.as_deref().unwrap_or("/dev/null");
             let serial =
@@ -83,46 +94,66 @@ pub fn run() -> Result<()> {
         }
     }
 
-    let event_loop = EventLoop::new()?;
-    let mut app = App::new(risc, cfg);
-    event_loop.run_app(&mut app)?;
-    Ok(())
+    Ok(risc)
 }
 
-/// Boot headless for `args.frames` and print FNV-1a hashes (or a liveness
-/// summary), for deterministic CI checks and golden-hash regeneration. No window
-/// is created.
-fn run_headless(args: &cli::HeadlessArgs) -> Result<()> {
+/// Run without a window. With `--frames` it's a deterministic experiment for CI
+/// checks and golden-hash regeneration: boot a throwaway copy of the image for
+/// exactly N synthetic-clock frames, then print FNV-1a hashes and a blank-word
+/// count. Without, it's a headless session (e.g. over ssh, talked to via
+/// `--serial-in`/`--serial-out`): write through to the image like the windowed
+/// emulator and pace the same 60 Hz clock by wall time until killed.
+fn run_headless(cfg: &cli::Config) -> Result<()> {
+    let Some(frames) = cfg.frames else {
+        let mut risc = build_machine(cfg, cfg.disk_image.as_deref())?;
+        let period = Duration::from_nanos(1_000_000_000 / FPS as u64);
+        let start = Instant::now();
+        let mut next_frame = start;
+        loop {
+            let now = Instant::now();
+            if now < next_frame {
+                std::thread::sleep(next_frame - now);
+            }
+            risc.set_time(start.elapsed().as_millis() as u32);
+            risc.run(CPU_HZ / FPS);
+            next_frame += period;
+            if next_frame < Instant::now() {
+                // Fell behind (e.g. after a stall); resync rather than spiral.
+                next_frame = Instant::now() + period;
+            }
+        }
+    };
+
     // Boot writes to the disk, so run against a throwaway copy: the source image
     // is left untouched and repeated runs stay reproducible.
-    let mut tmp = std::env::temp_dir();
-    tmp.push(format!("oberon_headless_{}.dsk", std::process::id()));
-    std::fs::copy(&args.disk_image, &tmp)?;
+    let scratch = match &cfg.disk_image {
+        Some(src) => {
+            let mut tmp = std::env::temp_dir();
+            tmp.push(format!("oberon_headless_{}.dsk", std::process::id()));
+            std::fs::copy(src, &tmp)?;
+            Some(tmp)
+        }
+        None => None, // --boot-from-serial, diskless
+    };
+    let mut risc = build_machine(cfg, scratch.as_deref())?;
+    risc_core::headless::run_frames(&mut risc, frames);
 
-    let mut risc = Risc::new();
-    risc.set_spi(1, Box::new(Disk::new(Some(&tmp))?));
-    risc_core::headless::run_frames(&mut risc, args.frames);
+    // The hashes are the machine-checkable result; the blank-word count is the
+    // human-readable liveness signal (a booted screen is mostly non-blank).
+    let words = (risc.fb_width() * risc.fb_height()) as usize;
+    let blank = risc.framebuffer()[..words]
+        .iter()
+        .filter(|&&w| w == 0)
+        .count();
+    println!(
+        "frames={frames} framebuffer_fnv1a=0x{:016x} state_fnv1a=0x{:016x} blank_words={blank}/{words}",
+        risc_core::headless::framebuffer_hash(&risc),
+        risc_core::headless::state_hash(&risc),
+    );
 
-    if args.hash {
-        println!(
-            "frames={} framebuffer_fnv1a=0x{:016x} state_fnv1a=0x{:016x}",
-            args.frames,
-            risc_core::headless::framebuffer_hash(&risc),
-            risc_core::headless::state_hash(&risc),
-        );
-    } else {
-        let words = (risc.fb_width() * risc.fb_height()) as usize;
-        let blank = risc.framebuffer()[..words]
-            .iter()
-            .filter(|&&w| w == 0)
-            .count();
-        println!(
-            "ran {} frames; framebuffer {blank}/{words} words blank",
-            args.frames
-        );
+    if let Some(tmp) = scratch {
+        let _ = std::fs::remove_file(tmp);
     }
-
-    let _ = std::fs::remove_file(&tmp);
     Ok(())
 }
 

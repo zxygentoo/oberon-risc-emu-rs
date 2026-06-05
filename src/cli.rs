@@ -3,21 +3,16 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::Parser;
 
 use crate::error::{Error, Result};
 
 const MAX_DIM: i32 = 2048;
 
-/// `risc [OPTIONS...] DISK-IMAGE` — or `risc headless ...`.
+/// `risc [OPTIONS...] DISK-IMAGE`.
 #[derive(Parser, Debug)]
 #[command(name = "risc", about = "A Project Oberon RISC5 emulator", version)]
-#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
-    /// Subcommand; with none, `risc DISK-IMAGE` opens the windowed emulator.
-    #[command(subcommand)]
-    pub command: Option<Command>,
-
     /// Scale the display in windowed mode
     #[arg(long, value_name = "REAL")]
     zoom: Option<f64>,
@@ -50,32 +45,17 @@ pub struct Cli {
     #[arg(long = "boot-from-serial")]
     boot_from_serial: bool,
 
+    /// Run without a window; exits after --frames, or runs until killed
+    #[arg(long, conflicts_with_all = ["zoom", "fullscreen"])]
+    headless: bool,
+
+    /// Run exactly N deterministic frames, print FNV-1a hashes, then exit
+    /// (headless only; boots a throwaway copy of the disk image)
+    #[arg(long, value_name = "N", requires = "headless")]
+    frames: Option<u32>,
+
     #[arg(value_name = "DISK-IMAGE")]
     disk_image: Option<PathBuf>,
-}
-
-/// Subcommands. With none, `risc` runs the windowed emulator.
-#[derive(Subcommand, Debug)]
-pub enum Command {
-    /// Boot headless (no window) for N frames and optionally print FNV-1a hashes
-    /// of the framebuffer and CPU state — for deterministic CI checks and golden
-    /// regeneration.
-    Headless(HeadlessArgs),
-}
-
-/// Arguments for the `headless` subcommand.
-#[derive(Args, Debug)]
-pub struct HeadlessArgs {
-    /// Number of 60 Hz frames to run.
-    #[arg(long, default_value_t = 250)]
-    pub frames: u32,
-
-    /// Print FNV-1a hashes of the framebuffer and CPU state.
-    #[arg(long)]
-    pub hash: bool,
-
-    #[arg(value_name = "DISK-IMAGE")]
-    pub disk_image: PathBuf,
 }
 
 /// Validated configuration handed to the frontend.
@@ -90,6 +70,8 @@ pub struct Config {
     pub serial_in: Option<String>,
     pub serial_out: Option<String>,
     pub boot_from_serial: bool,
+    pub headless: bool,
+    pub frames: Option<u32>,
     pub disk_image: Option<PathBuf>,
 }
 
@@ -126,6 +108,8 @@ impl Cli {
             serial_in: self.serial_in,
             serial_out: self.serial_out,
             boot_from_serial: self.boot_from_serial,
+            headless: self.headless,
+            frames: self.frames,
             disk_image: self.disk_image,
         })
     }
@@ -179,16 +163,38 @@ mod tests {
     }
 
     #[test]
-    fn headless_subcommand_parses() {
-        let cli = Cli::parse_from(["risc", "headless", "--frames", "42", "--hash", "disk.dsk"]);
-        let Some(Command::Headless(args)) = cli.command else {
-            panic!("expected the headless subcommand");
-        };
-        assert_eq!(args.frames, 42);
-        assert!(args.hash);
-        assert_eq!(args.disk_image, PathBuf::from("disk.dsk"));
-        // A bare disk image still selects the GUI (no subcommand).
-        let cli = Cli::parse_from(["risc", "disk.dsk"]);
-        assert!(cli.command.is_none());
+    fn headless_flags_parse() {
+        let cli = Cli::parse_from(["risc", "--headless", "--frames", "42", "disk.dsk"]);
+        let cfg = cli.into_config().unwrap();
+        assert!(cfg.headless);
+        assert_eq!(cfg.frames, Some(42));
+        assert_eq!(cfg.disk_image, Some(PathBuf::from("disk.dsk")));
+        // Bare --headless runs unbounded.
+        let cfg = Cli::parse_from(["risc", "--headless", "disk.dsk"])
+            .into_config()
+            .unwrap();
+        assert_eq!(cfg.frames, None);
+        // A bare disk image still selects the GUI.
+        let cfg = Cli::parse_from(["risc", "disk.dsk"]).into_config().unwrap();
+        assert!(!cfg.headless);
+    }
+
+    #[test]
+    fn headless_flag_relations() {
+        // --frames is headless-only.
+        assert!(Cli::try_parse_from(["risc", "--frames", "1", "d.dsk"]).is_err());
+        // Window-only options conflict with --headless.
+        assert!(Cli::try_parse_from(["risc", "--headless", "--fullscreen", "d.dsk"]).is_err());
+        assert!(Cli::try_parse_from(["risc", "--headless", "--zoom", "2", "d.dsk"]).is_err());
+        // The rest compose: size/mem/leds/serial work headless.
+        let cli = Cli::parse_from([
+            "risc",
+            "--headless",
+            "--size",
+            "800x600",
+            "--leds",
+            "--boot-from-serial",
+        ]);
+        assert!(cli.into_config().is_ok());
     }
 }

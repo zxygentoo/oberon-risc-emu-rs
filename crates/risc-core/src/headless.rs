@@ -1,5 +1,5 @@
 //! Deterministic headless driver and state hashing — shared by the boot golden
-//! tests and the `risc headless` subcommand.
+//! tests and the `risc` binary's `--headless --frames` mode.
 //!
 //! The synthetic 60 Hz clock (not wall time) makes a boot byte-for-byte
 //! reproducible, which is exactly what the C-derived goldens and the live cosim

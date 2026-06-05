@@ -1,6 +1,7 @@
 //! The `risc` binary and windowed frontend (winit + softbuffer) for the Project
 //! Oberon RISC5 emulator: the window, 60 fps clock loop, 1-bit->ARGB rendering,
-//! input/PS-2 handling, CLI, and a deterministic headless runner.
+//! input/PS-2 handling, CLI, and the `--headless` runner (a deterministic
+//! bounded mode for CI, or an unbounded windowless session).
 //!
 //! The pure machine — CPU, software FP, MMIO, disk, serial, clipboard bridge —
 //! lives in the `risc_core` crate. The pixel-scaling helpers in `render` sit in

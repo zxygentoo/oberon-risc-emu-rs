@@ -76,8 +76,9 @@ acts as the middle button. Hotkeys: `F12` / `Ctrl+Shift+Delete` reset · `F11` /
 - `--mem MEGS` — give the machine more than its default 1 MB of RAM.
 - `--size WIDTHxHEIGHT` — use a non-standard framebuffer/window size.
 - `--leds` — print LED changes to stdout (handy for kernel work, noisy otherwise).
+- `--headless` — run without a window (see [Headless boots](#headless-boots)).
 
-`./target/release/risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`).
+`./target/release/risc --help` lists the rest (`--zoom`, `--serial-in`/`--serial-out`, `--boot-from-serial`, `--frames`).
 
 ## Transferring files
 
@@ -194,22 +195,29 @@ render hot path has a `cargo bench` microbenchmark.
 
 ### Headless boots
 
-The `headless` subcommand runs the core on the same deterministic 60 Hz clock as
-the boot golden — windowless and byte-for-byte reproducible — so it's handy for
-CI smoke checks and for regenerating golden hashes:
+`--headless` runs the emulator without a window. It composes with the other
+options (`--size`, `--mem`, `--leds`, `--serial-in`/`--serial-out`,
+`--boot-from-serial`), in two flavors:
 
 ```sh
-# run 250 frames, then print the framebuffer + CPU-state FNV-1a hashes
-./target/release/risc headless --frames 250 --hash DiskImage/Oberon-2020-08-18.dsk
+# bounded: run 250 deterministic frames, print framebuffer + CPU-state FNV-1a hashes
+./target/release/risc --headless --frames 250 DiskImage/Oberon-2020-08-18.dsk
+
+# unbounded: a headless session (e.g. over ssh), talked to via serial, until killed
+./target/release/risc --headless \
+  --serial-in in.fifo --serial-out out.fifo DiskImage/Oberon-2020-08-18.dsk
 ```
 
-- `--frames N` — how many 60 Hz frames to boot (default 250).
-- `--hash` — print FNV-1a hashes of the framebuffer and the `{PC, R, H, flags}`
-  state; these line up with `boot_matches_c_reference`'s checkpoints (at frame
-  250 they reproduce the C-derived golden). Omit it for a one-line liveness
-  summary (frames run, blank framebuffer words) instead.
-
-It boots a throwaway copy of the image, so the original is left untouched.
+- `--frames N` — boot a *throwaway copy* of the image for exactly N frames on
+  the same deterministic 60 Hz clock as the boot golden — byte-for-byte
+  reproducible, the original untouched — then print one `key=value` line:
+  FNV-1a hashes of the framebuffer and the `{PC, R, H, flags}` state (they line
+  up with `boot_matches_c_reference`'s checkpoints; at frame 250 they reproduce
+  the C-derived golden) plus a blank-framebuffer-word count as a quick liveness
+  signal. Handy for CI smoke checks and golden regeneration.
+- Without `--frames`, the machine writes through to the disk image and paces
+  the 60 Hz clock by wall time, just like the windowed emulator — a persistent
+  headless Oberon.
 
 ## License
 

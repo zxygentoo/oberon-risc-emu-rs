@@ -1,23 +1,16 @@
 //! Raw serial line over host file descriptors (port of the POSIX branch of
 //! `raw-serial.c`), used by `--serial-in`/`--serial-out`. Non-blocking fds with
-//! `poll(2)` for the ready/writable status bits. Windows named pipes are a
-//! Phase-2 item.
-//!
-//! # Safety
-//!
-//! The single `unsafe` block calls `libc::poll`. The `pollfd` array is a live,
-//! initialised stack slice; the fds come from `File`s this struct owns and
-//! outlive the call, so they stay valid for `poll`'s duration. Reads/writes go
-//! through safe `std::io` on those same `File`s.
-
-// Audited exception to the crate-wide `deny(unsafe_code)`: one `libc::poll` FFI.
-#![allow(unsafe_code)]
+//! `poll(2)` for the ready/writable status bits — via `rustix`'s safe wrapper,
+//! keeping the crate free of `unsafe` outside the `cosim` FFI. Windows named
+//! pipes are a Phase-2 item.
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::AsRawFd;
 use std::path::Path;
+
+use rustix::event::{poll, PollFd, PollFlags, Timespec};
+use rustix::fs::OFlags;
 
 use crate::io::Serial;
 
@@ -29,14 +22,15 @@ pub struct RawSerial {
 impl RawSerial {
     /// Open the input (read-only) and output (read-write) files non-blocking.
     pub fn new(filename_in: &Path, filename_out: &Path) -> std::io::Result<Self> {
+        let nonblock = OFlags::NONBLOCK.bits() as i32;
         let fd_in = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(nonblock)
             .open(filename_in)?;
         let fd_out = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_NONBLOCK)
+            .custom_flags(nonblock)
             .open(filename_out)?;
         Ok(RawSerial { fd_in, fd_out })
     }
@@ -45,25 +39,19 @@ impl RawSerial {
 impl Serial for RawSerial {
     fn read_status(&mut self) -> u32 {
         let mut fds = [
-            libc::pollfd {
-                fd: self.fd_in.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
-            libc::pollfd {
-                fd: self.fd_out.as_raw_fd(),
-                events: libc::POLLOUT,
-                revents: 0,
-            },
+            PollFd::new(&self.fd_in, PollFlags::IN),
+            PollFd::new(&self.fd_out, PollFlags::OUT),
         ];
         let mut status = 0;
-        let r = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 0) };
-        if r > 0 {
-            if fds[0].revents & libc::POLLIN != 0 {
-                status |= 1; // rx ready
-            }
-            if fds[1].revents & libc::POLLOUT != 0 {
-                status |= 2; // tx ready
+        // Zero timeout: a pure readiness probe, as the C's `poll(fds, 2, 0)`.
+        if let Ok(n) = poll(&mut fds, Some(&Timespec::default())) {
+            if n > 0 {
+                if fds[0].revents().contains(PollFlags::IN) {
+                    status |= 1; // rx ready
+                }
+                if fds[1].revents().contains(PollFlags::OUT) {
+                    status |= 2; // tx ready
+                }
             }
         }
         status

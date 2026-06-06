@@ -15,10 +15,10 @@
 //!
 //! [`oberon-risc-emu`]: https://github.com/pdewacht/oberon-risc-emu
 
-// No `unsafe` in this crate except two audited spots, each with a module-level
-// `#![allow(unsafe_code)]` + safety note: the `cosim` FFI bindings and the unix
-// `raw_serial` device (`libc::poll`/`read`/`write`). We use `deny`, not
-// `forbid`, precisely because `forbid` cannot be relaxed by those local allows.
+// No `unsafe` in this crate except one audited spot with a module-level
+// `#![allow(unsafe_code)]` + safety note: the `cosim` FFI bindings. We use
+// `deny`, not `forbid`, precisely because `forbid` cannot be relaxed by that
+// local allow.
 #![deny(unsafe_code)]
 
 pub mod boot_rom;

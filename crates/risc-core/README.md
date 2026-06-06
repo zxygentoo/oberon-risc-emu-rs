@@ -7,12 +7,12 @@ platform UI**. A faithful, bit-exact Rust port of Peter De Wachter's
 
 The port is structurally 1:1 with the C reference — each module corresponds to
 one C source file — and is `std` but otherwise dependency-light (`bitflags` for
-the ALU flags; `libc` only for the unix raw-serial device). That keeps it usable
-behind a [`winit`](https://crates.io/crates/winit) frontend (the windowed
+the ALU flags; [`rustix`](https://crates.io/crates/rustix) only for the unix
+raw-serial device). That keeps it usable behind a
+[`winit`](https://crates.io/crates/winit) frontend (the windowed
 [`oberon-risc-emu`](../..) crate is the reference consumer), a headless runner, or —
-in future — wasm/libretro. The crate is `#![deny(unsafe_code)]` save two audited
-spots (the `cosim` FFI and the unix `raw_serial` device), each carrying a
-module-level allow and safety note.
+in future — wasm/libretro. The crate is `#![deny(unsafe_code)]` save one audited
+spot (the `cosim` FFI), carrying a module-level allow and safety note.
 
 ## Modules
 

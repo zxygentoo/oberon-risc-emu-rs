@@ -1452,7 +1452,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.11.1",
  "cc",
- "libc",
+ "rustix 1.1.4",
 ]
 
 [[package]]

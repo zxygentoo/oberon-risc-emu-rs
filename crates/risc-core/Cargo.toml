@@ -17,9 +17,10 @@ cosim = ["dep:cc"]
 # deps, keeping the core dependency-light).
 bitflags = "2"
 
-# Used only by the unix raw-serial device (poll(2) + non-blocking fds).
+# Used only by the unix raw-serial device (poll(2) + non-blocking fds);
+# rustix's safe wrappers keep the crate free of unsafe outside the cosim FFI.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+rustix = { version = "1", features = ["event", "fs"] }
 
 [build-dependencies]
 # Compiles the C reference shim for the `cosim` feature only.

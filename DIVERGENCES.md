@@ -5,24 +5,24 @@ proven by the frozen FP vectors, the C-derived boot golden, and the live
 co-simulation net (FP, single-instruction, and full-boot lockstep, all
 zero-divergence). It deliberately differs in exactly one place.
 
-## `MOV` flags read — `0x50` (hardware) vs `0xD0` (C)
+## `MOV` flags read — `0x53` (hardware) vs `0xD0` (C)
 
 Reading the CPU flags via `MOV` with `q=0, u=1, v=1` returns the four status
 flags `N Z C V` in the top nibble, over a fixed low byte:
 
 | Source | Low byte | Result |
 | --- | --- | --- |
-| RISC5 hardware (`RISC5.v:139`) | `0x50` | `0x50 \| (N<<31) \| (Z<<30) \| (C<<29) \| (V<<28)` |
+| RISC5 hardware (`RISC5.v`, `{N, Z, C, OV, 20'b0, 8'h53}`) | `0x53` | `0x53 \| (N<<31) \| (Z<<30) \| (C<<29) \| (V<<28)` |
 | C `oberon-risc-emu` (`risc.c`) | `0xD0` | `0xD0 \| …` |
 
-The low byte is a CPU-id / version field. The FPGA emits `0x50`; the C emulator
+The low byte is a CPU-id / version field. The FPGA emits `0x53`; the C emulator
 deliberately uses `0xD0` (its source comments it `// ???`). **This port follows
-the hardware and emits `0x50`.**
+the hardware and emits `0x53`.**
 
 This is safe and inert for booting Project Oberon: the boot path never reads
 this byte, so the boot golden and the full-boot cosim lockstep stay green
 unchanged. It is guarded by the unit test
-`risc::tests::mov_flags_read_is_hardware_0x50` (the differential fuzzer cannot
+`risc::tests::mov_flags_read_is_hardware_0x53` (the differential fuzzer cannot
 oracle this byte against C, so the single-instruction and burst layers in
 `tests/cosim.rs` steer around it as the one expected divergence).
 

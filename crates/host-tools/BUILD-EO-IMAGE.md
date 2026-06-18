@@ -73,9 +73,9 @@ Commits (oldest→newest): `extract-source SD+keep-objects` · `EO groundwork` �
   `CoreLinker.Mod` (EO object-format offline linker — see below).
   Shared from **`assets/common/`** unchanged: `Norebo.Mod`, `FileDir.Mod`,
   `Files.Mod` (host-backed, work as-is for EO).
-- **`host_tools::shim`** (`src/shim.rs`): the headless runtime, moved out of
-  `build-po-image` into the lib so any inner core can be booted. `build-po-image` now
-  uses `host_tools::shim::run`.
+- **`risc_core::shim`** (`../risc-core/src/shim.rs`): the headless runtime, moved
+  out of `build-po-image` into the core crate so any inner core can be booted. The
+  builders use `risc_core::shim::run`.
 - **`eo-inner-run`** (`src/bin/eo-inner-run.rs`): `eo-inner-run <DIR> <Module.Proc> [param…]` —
   boots `DIR/InnerCore` and runs one command. The bring-up harness.
 - **`assets/eo/bootstrap/`** — the vendored EO bootstrap seed: the `Modules`-topped
@@ -270,7 +270,7 @@ OBERON_TRACE=1 target/release/eo-inner-run /tmp/eo-system <cmd>    # → trace o
   `STACK_ORG=0x80000`, `MEM_BYTES=8MB`. `shim_run` — runs to exit/trap/`PC left RAM`;
   honours `OBERON_TRACE` (ring of last instructions + regs + zero-word trip-wire).
   `disk.rs:57` — the `0x80002` SD rebase.
-- `host_tools::shim` (`src/shim.rs`): syscall ABI; `trap` (~190) prints
+- `risc_core::shim` (`../risc-core/src/shim.rs`): syscall ABI; `trap` (~190) prints
   trap-type + module + pos (so boot crashes are debuggable).
 - `src/bin/build-eo-image.rs`: just the embedded EO `Seed` — `TOOLCHAIN`
   (glue + `VDisk` family + `eo/bootstrap` objects) + the golden `InnerCore` + the CLI.

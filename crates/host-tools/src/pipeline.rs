@@ -3,9 +3,10 @@
 //!
 //! Both tools do the same thing — compile a whole Oberon source tree against an
 //! embedded host toolchain, link a fresh inner core, and assemble a bootable
-//! `Oberon.dsk` — and differ only in the embedded [`Seed`] (the host glue plus the
-//! bootstrap objects that let the headless [`shim`](crate::shim) run the first
-//! compile) and a name for messages. That pipeline lives here; each binary supplies
+//! `Oberon.dsk` — and differ only in the embedded [`Seed`](crate::pipeline::Seed)
+//! (the host glue plus the bootstrap objects that let the headless
+//! [`shim`](risc_core::shim) run the first compile) and a name for messages.
+//! That pipeline lives here; each binary supplies
 //! only its `Seed` and CLI. A Rust take on project-norebo's `build-image.py`,
 //! driving the shim one Oberon command at a time.
 

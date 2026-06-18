@@ -2,7 +2,8 @@
 
 The pure Project Oberon RISC5 machine: CPU, software floating-point, the MMIO
 device traits, and the disk/serial/clipboard devices — with **no windowing or
-platform UI**. A faithful, bit-exact Rust port of Peter De Wachter's
+platform UI** — plus the headless Norebo `shim` that drives the same CPU for
+the host build toolchain. A faithful, bit-exact Rust port of Peter De Wachter's
 [`oberon-risc-emu`](https://github.com/pdewacht/oberon-risc-emu).
 
 The port is structurally 1:1 with the C reference — each module corresponds to
@@ -27,6 +28,10 @@ spot (the `cosim` FFI), carrying a module-level allow and safety note.
 | `raw_serial` | —                | raw host serial line over a unix tty/pipe (unix only)         |
 | `clipboard` | —                | the clipboard GET/PUT state machine bridging a host clipboard |
 | `headless`  | —                | deterministic windowless driver + framebuffer/state hashing   |
+| `shim`      | `norebo.c`¹      | headless host-syscall runtime for the image-build toolchain   |
+
+¹ from [`project-norebo`](https://github.com/pdewacht/project-norebo), not the
+emulator: the `Runtime/norebo.c` host-syscall map the image builders drive.
 
 [`Risc`]: src/risc.rs
 
@@ -76,9 +81,9 @@ cargo test -p risc-core           # CPU + FP units, no GUI deps
   ```
 
 - **Live co-simulation** — the opt-in `cosim` feature compiles the C reference
-  (via [`cosim/shim.c`](cosim/shim.c)) and compares every FP/`idiv` result, a
-  random instruction over random state, and a full-boot lockstep. Needs a C
-  toolchain and the sibling C repo:
+  (via [`cosim/shim.c`](cosim/shim.c)) and compares every FP/`idiv` result,
+  random instructions over random state (single-step and multi-step bursts),
+  and a full-boot lockstep. Needs a C toolchain and the sibling C repo:
 
   ```sh
   OBERON_C_SRC=/path/to/oberon-risc-emu/src \
@@ -86,7 +91,8 @@ cargo test -p risc-core           # CPU + FP units, no GUI deps
     cargo test -p risc-core --release --features cosim
   ```
 
-  Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS`.
+  Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS` /
+  `COSIM_BURST_ITERS`.
 
 ### Regenerating the fixtures
 

@@ -270,8 +270,16 @@ impl Risc {
 
     /// Resize RAM and the framebuffer, patching the boot ROM accordingly. Port
     /// of `risc_configure_memory`.
+    ///
+    /// All three arguments are clamped to what the machine can represent: RAM
+    /// to 1..=32 MB, the screen to 32..=4096 on each axis (the mouse report
+    /// packs each coordinate in 12 bits) with the width rounded down to whole
+    /// 32-pixel framebuffer words. The `risc` CLI applies stricter limits of
+    /// its own before calling here.
     pub fn configure_memory(&mut self, megabytes_ram: i32, screen_width: i32, screen_height: i32) {
         let megs = megabytes_ram.clamp(1, 32) as u32;
+        let screen_width = screen_width.clamp(32, 4096) & !31;
+        let screen_height = screen_height.clamp(32, 4096);
 
         self.display_start = megs << 20;
         self.mem_size = self.display_start + (screen_width * screen_height / 8) as u32;
@@ -1527,6 +1535,12 @@ mod tests {
         assert_eq!(r.display_start, 1 << 20);
         r.configure_memory(99, 1024, 768);
         assert_eq!(r.display_start, 32 << 20);
+        // Screen dimensions clamp to [32, 4096]; width rounds to whole words.
+        r.configure_memory(1, 100_000, 7);
+        assert_eq!((r.fb_width, r.fb_height), (4096 / 32, 32));
+        r.configure_memory(1, 1000, 768);
+        assert_eq!(r.fb_width, 992 / 32, "992 = 1000 rounded down to 32s");
+        assert_eq!(r.mem_size, (1 << 20) + 992 * 768 / 8);
     }
 
     #[test]

@@ -181,8 +181,9 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" cargo test
   It compiles all of Oberon through the shim, so it's `#[ignore]`d (run with
   `cargo test -p host-tools --release -- --ignored`).
 - **Live co-simulation** — the `cosim` feature compiles the C reference and
-  compares every FP/`idiv` result, a random instruction over random state, and a
-  full-boot lockstep, frame by frame. Needs a C toolchain and the sibling C repo:
+  compares every FP/`idiv` result, random instructions over random state
+  (single-step and multi-step bursts), and a full-boot lockstep, frame by
+  frame. Needs a C toolchain and the sibling C repo:
 
 ```sh
 OBERON_C_SRC=/path/to/oberon-risc-emu/src \
@@ -190,8 +191,8 @@ OBERON_DISK="$PWD/DiskImage/Oberon-2020-08-18.dsk" \
   cargo test -p risc-core --release --features cosim
 ```
 
-Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS`; the
-render hot path has a `cargo bench` microbenchmark.
+Iteration counts are tunable via `COSIM_FP_ITERS` / `COSIM_INSN_ITERS` /
+`COSIM_BURST_ITERS`; the render hot path has a `cargo bench` microbenchmark.
 
 ### Headless boots
 

@@ -40,11 +40,11 @@ fn iters(var: &str, default: u32) -> u32 {
         .unwrap_or(default)
 }
 
-/// The one intentional divergence (see DIVERGENCES.md / RISC5.v:139): a `MOV`
-/// with q=0, u=1, v=1 reads the flags byte, where our port emits the hardware's
-/// 0x50 and the C reference emits 0xD0. It cannot be oracled against C, so the
-/// differential tests steer around it (`mov_flags_read_is_hardware_0x50` pins the
-/// actual value).
+/// The one intentional divergence (see DIVERGENCES.md / RISC5.v
+/// `{N, Z, C, OV, 20'b0, 8'h53}`): a `MOV` with q=0, u=1, v=1 reads the flags
+/// byte, where our port emits the hardware's 0x53 and the C reference emits
+/// 0xD0. It cannot be oracled against C, so the differential tests steer around
+/// it (`mov_flags_read_is_hardware_0x53` pins the actual value).
 fn is_mov_flags_read(ir: u32) -> bool {
     ir & 0x8000_0000 == 0        // register class
         && (ir >> 16) & 0xF == 0 // MOV

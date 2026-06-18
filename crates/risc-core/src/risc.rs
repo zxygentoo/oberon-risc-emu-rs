@@ -533,12 +533,13 @@ impl Risc {
                         c_val << 16
                     } else if ir & VBIT != 0 {
                         // Reading the flags: the low byte is the hardware's
-                        // CPU-id/version field 0x50 (RISC5.v:139). The C
-                        // reference deliberately emits 0xD0 instead; we follow
-                        // the hardware. This is the one intentional divergence
-                        // from the C oracle (see DIVERGENCES.md) and is inert to
-                        // the boot, which never reads this byte.
-                        0x50 | (u32::from(self.flags.contains(Flags::N)) << 31)
+                        // CPU-id/version field 0x53 (RISC5.v, MOV/aluRes path:
+                        // `{N, Z, C, OV, 20'b0, 8'h53}`). The C reference
+                        // deliberately emits 0xD0 instead; we follow the
+                        // hardware. This is the one intentional divergence from
+                        // the C oracle (see DIVERGENCES.md) and is inert to the
+                        // boot, which never reads this byte.
+                        0x53 | (u32::from(self.flags.contains(Flags::N)) << 31)
                             | (u32::from(self.flags.contains(Flags::Z)) << 30)
                             | (u32::from(self.flags.contains(Flags::C)) << 29)
                             | (u32::from(self.flags.contains(Flags::V)) << 28)
@@ -1018,17 +1019,18 @@ mod tests {
     }
 
     #[test]
-    fn mov_flags_read_is_hardware_0x50() {
+    fn mov_flags_read_is_hardware_0x53() {
         // MOV q=0, u=1, v=1 reads the flags: N/Z/C/V in the top nibble over the
-        // hardware's 0x50 CPU-id byte (RISC5.v:139). The C reference emits 0xD0
-        // there; this is our one intentional divergence (DIVERGENCES.md), and
-        // since the differential fuzzer can't oracle it, this is its only guard.
+        // hardware's 0x53 CPU-id byte (RISC5.v: `{N, Z, C, OV, 20'b0, 8'h53}`).
+        // The C reference emits 0xD0 there; this is our one intentional
+        // divergence (DIVERGENCES.md), and since the differential fuzzer can't
+        // oracle it, this is its only guard.
         let mut r = cpu();
         r.ram[0] = reg(0, 1, 1, 1, 0, MOV, 0);
         r.flags.insert(Flags::N);
         r.flags.insert(Flags::C);
         r.single_step();
-        assert_eq!(r.r[1], 0x50 | 0x8000_0000 | 0x2000_0000);
+        assert_eq!(r.r[1], 0x53 | 0x8000_0000 | 0x2000_0000);
     }
 
     #[test]

@@ -33,7 +33,7 @@ it can reach — including corners where the C reference itself is known to
 differ from the FPGA (`RISC5.v`). Those corners are inherited deliberately:
 matching the hardware there would put this port at odds with its own oracle.
 The working rule: follow the C wherever the cosim can oracle it; follow the
-hardware only where it cannot (the `0x50` ID byte above).
+hardware only where it cannot (the `0x53` ID byte above).
 
 Known inherited differences from the hardware:
 

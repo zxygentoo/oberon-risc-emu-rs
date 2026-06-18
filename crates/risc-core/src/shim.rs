@@ -621,7 +621,11 @@ mod tests {
     fn host() -> Host {
         // A cwd that does not exist: the in-memory tests never persist, and the
         // `files_old` case wants the host-side read to simply fail.
-        Host::new(std::path::PathBuf::from("/nonexistent-shim-test"), vec![], vec![])
+        Host::new(
+            std::path::PathBuf::from("/nonexistent-shim-test"),
+            vec![],
+            vec![],
+        )
     }
 
     #[test]

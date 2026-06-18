@@ -92,7 +92,11 @@ impl Serial for CaptureSerial {
         2 | u32::from(!self.0.borrow().to_guest.is_empty())
     }
     fn read_data(&mut self) -> u32 {
-        self.0.borrow_mut().to_guest.pop_front().map_or(0, u32::from)
+        self.0
+            .borrow_mut()
+            .to_guest
+            .pop_front()
+            .map_or(0, u32::from)
     }
     fn write_data(&mut self, value: u32) {
         self.0.borrow_mut().from_guest.push(value as u8);
@@ -110,8 +114,8 @@ fn main() {
 fn run(cli: &Cli) -> Result<(), String> {
     let serial = Rc::new(RefCell::new(SerialState::default()));
     let mut risc = Risc::new();
-    let disk =
-        Disk::new(Some(&cli.image)).map_err(|e| format!("open disk {}: {e}", cli.image.display()))?;
+    let disk = Disk::new(Some(&cli.image))
+        .map_err(|e| format!("open disk {}: {e}", cli.image.display()))?;
     risc.set_spi(1, Box::new(disk));
     match &cli.pclink_dir {
         Some(dir) => {
@@ -215,12 +219,18 @@ fn run(cli: &Cli) -> Result<(), String> {
 /// Print what we observed: settle frame, framebuffer hash, ink density, serial.
 fn report(risc: &Risc, serial: &SerialState, settled_at: Option<u32>) {
     eprintln!("Final framebuffer hash: {:#018x}", framebuffer_hash(risc));
-    eprintln!("Ink density: {:.1}% of pixels set", ink_density(risc) * 100.0);
+    eprintln!(
+        "Ink density: {:.1}% of pixels set",
+        ink_density(risc) * 100.0
+    );
     match settled_at {
         Some(f) => eprintln!("Framebuffer settled by frame ~{f} (likely reached the desktop)."),
         None => eprintln!("Framebuffer never settled — try more --frames, or the config differs."),
     }
-    eprintln!("Captured {} serial byte(s) from EO.", serial.from_guest.len());
+    eprintln!(
+        "Captured {} serial byte(s) from EO.",
+        serial.from_guest.len()
+    );
     if !serial.from_guest.is_empty() {
         let preview: String = String::from_utf8_lossy(&serial.from_guest)
             .chars()

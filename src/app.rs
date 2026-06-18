@@ -16,6 +16,7 @@ use winit::window::{Fullscreen, Window, WindowId};
 
 use risc_core::clipboard::ClipboardBridge;
 use risc_core::disk::Disk;
+use risc_core::headless::{CPU_HZ, FPS};
 use risc_core::io::Led;
 use risc_core::pclink::PcLink;
 use risc_core::risc::Risc;
@@ -26,9 +27,6 @@ use crate::cli;
 use crate::clipboard::ArboardClipboard;
 use crate::error::Result;
 use crate::input;
-
-const CPU_HZ: u32 = 25_000_000;
-const FPS: u32 = 60;
 
 type SbContext = softbuffer::Context<Rc<Window>>;
 type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
@@ -301,9 +299,13 @@ impl App {
         let Ok(mut buf) = surface.buffer_mut() else {
             return;
         };
-        if buf.len() == self.scaled.len() {
-            buf.copy_from_slice(&self.scaled);
+        // A fresh surface buffer's contents are unspecified; never present one
+        // we didn't fully paint. (The sizes always agree today — both derive
+        // from win_w * win_h — so this is a guard, not a code path.)
+        if buf.len() != self.scaled.len() {
+            return;
         }
+        buf.copy_from_slice(&self.scaled);
         window.pre_present_notify();
         let _ = buf.present();
     }

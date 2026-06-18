@@ -4,9 +4,12 @@
 //!
 //! Oberon uses bare `CR` line endings; the host uses `LF` (or `CRLF`). On GET
 //! (host -> Oberon) `CRLF`/`LF` are folded to `CR`; on PUT (Oberon -> host) `CR`
-//! becomes `LF`. The state machine and conversions are host-agnostic (a
-//! [`HostClipboard`] supplies the actual text), so the core builds and tests
-//! without the `arboard` dependency; the arboard backend is feature-gated.
+//! becomes `LF`. Oberon text is Latin-1: PUT decodes each byte as its Latin-1
+//! code point for the host (where the C hands SDL the raw bytes), while GET
+//! passes the host's UTF-8 bytes to Oberon unchanged, as the C does. The state
+//! machine and conversions are host-agnostic (a [`HostClipboard`] supplies the
+//! actual text), so the core builds and tests without the `arboard` dependency;
+//! the arboard backend is feature-gated.
 
 use crate::io::Clipboard;
 
@@ -111,7 +114,9 @@ impl Clipboard for ClipboardBridge {
         self.data[self.ptr] = byte;
         self.ptr += 1;
         if self.ptr == self.len {
-            let text = String::from_utf8_lossy(&self.data).into_owned();
+            // Oberon text is Latin-1, where every byte is a code point; decode
+            // it as such (lossy UTF-8 would mangle every byte >= 0x80).
+            let text: String = self.data.iter().map(|&b| char::from(b)).collect();
             self.host.set_text(&text);
             self.reset();
         }
@@ -163,6 +168,18 @@ mod tests {
             clip.write_data(b as u32);
         }
         assert_eq!(*content.borrow(), "x\ny");
+    }
+
+    #[test]
+    fn put_decodes_latin1_bytes() {
+        let content = Rc::new(RefCell::new(String::new()));
+        let mut clip = bridge(&content);
+        let input = [b'a', 0xE4, b'b']; // 0xE4 = 'ä' in Latin-1
+        clip.write_control(input.len() as u32);
+        for &b in &input {
+            clip.write_data(u32::from(b));
+        }
+        assert_eq!(*content.borrow(), "aäb");
     }
 
     #[test]

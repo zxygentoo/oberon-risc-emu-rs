@@ -30,6 +30,10 @@ const INDEX_SIZE: usize = SECTOR_SIZE / 4; // 256 disk addresses per index secto
 const HEADER_SIZE: usize = 352;
 const DIR_ROOT_ADR: u32 = 29; // sector 1
 const DIR_PG_SIZE: usize = 24;
+// Maximum directory B-tree depth [`Image::walk`] accepts: generous for any real
+// volume (a full 64 MB filesystem's tree is a handful of levels), small enough
+// that a hostile chain of pages can't recurse the host off its stack.
+const MAX_DIR_DEPTH: usize = 64;
 const DIR_MARK: u32 = 0x9B1E_A38D;
 const HEADER_MARK: u32 = 0x9BA7_1D86;
 
@@ -91,11 +95,12 @@ impl Image {
     /// Every file in the directory, in name order.
     ///
     /// # Errors
-    /// Fails if a directory page is malformed (bad mark or out of range).
+    /// Fails if a directory page is malformed (bad mark, out of range, or
+    /// nested deeper than any real B-tree could be).
     pub fn entries(&self) -> io::Result<Vec<Entry>> {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
-        self.walk(DIR_ROOT_ADR, &mut out, &mut seen)?;
+        self.walk(DIR_ROOT_ADR, &mut out, &mut seen, 0)?;
         Ok(out)
     }
 
@@ -168,17 +173,27 @@ impl Image {
     }
 
     /// In-order B-tree walk (mirrors `VFileDir.enumerate`) collecting every entry.
-    /// `seen` guards against a cyclic/corrupt directory.
-    fn walk(&self, adr: u32, out: &mut Vec<Entry>, seen: &mut HashSet<u32>) -> io::Result<()> {
+    /// `seen` guards against a cyclic directory; `depth` caps recursion so a
+    /// corrupt/hostile page chain errors out instead of overflowing the stack.
+    fn walk(
+        &self,
+        adr: u32,
+        out: &mut Vec<Entry>,
+        seen: &mut HashSet<u32>,
+        depth: usize,
+    ) -> io::Result<()> {
         if adr == 0 || !seen.insert(adr / 29) {
             return Ok(());
+        }
+        if depth >= MAX_DIR_DEPTH {
+            return Err(bad("directory tree is too deep (corrupt image?)"));
         }
         let page = self.sector(adr)?;
         if rd_u32(&page, 0) != DIR_MARK {
             return Err(bad("directory page has the wrong mark"));
         }
         let m = (rd_i32(&page, OFF_DIR_M).max(0) as usize).min(DIR_PG_SIZE);
-        self.walk(rd_u32(&page, OFF_DIR_P0), out, seen)?;
+        self.walk(rd_u32(&page, OFF_DIR_P0), out, seen, depth + 1)?;
         for i in 0..m {
             let base = OFF_DIR_E + i * DIR_ENTRY_SIZE;
             if let Some(name) = read_name(&page[base..base + FN_LENGTH]) {
@@ -187,7 +202,7 @@ impl Image {
                     header: rd_u32(&page, base + FN_LENGTH),
                 });
             }
-            self.walk(rd_u32(&page, base + FN_LENGTH + 4), out, seen)?;
+            self.walk(rd_u32(&page, base + FN_LENGTH + 4), out, seen, depth + 1)?;
         }
         Ok(())
     }
@@ -361,6 +376,21 @@ mod tests {
     #[test]
     fn rejects_a_non_filesystem_image() {
         let err = Image::from_bytes(vec![0u8; SECTOR_SIZE]).err().unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn rejects_a_pathologically_deep_directory() {
+        // A chain of well-formed pages, each pointing p0 at the next — deeper
+        // than any real B-tree. Distinct sectors, so the cycle guard never
+        // fires; without the depth cap this would recurse once per page.
+        let n = 100u32; // > MAX_DIR_DEPTH
+        let mut img = vec![0u8; (n as usize + 1) * SECTOR_SIZE];
+        for s in 1..=n {
+            put_dir_page(&mut img, s, if s < n { adr(s + 1) } else { 0 }, &[]);
+        }
+        let image = Image::from_bytes(img).unwrap();
+        let err = image.entries().err().expect("deep chain must be rejected");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 

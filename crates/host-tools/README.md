@@ -19,8 +19,9 @@ proper `--help`.
 The two image builders share their whole pipeline — compile a source tree against
 an embedded toolchain, link a fresh inner core, lay down a bootable `Oberon.dsk` —
 in [`host_tools::pipeline`](src/pipeline.rs); each binary differs only in its embedded
-seed and CLI. Compile-order resolution is shared in [`resolve`](src/resolve.rs),
-and the headless runtime in [`shim`](src/shim.rs).
+seed and CLI. Compile-order resolution is shared in [`resolve`](src/resolve.rs);
+the headless shim runtime they drive lives in
+[`risc_core::shim`](../risc-core/src/shim.rs).
 
 `eo-driver` and `eo-inner-run` are host-side **developer tools** for hacking on the
 EO bootstrap and the host toolchain — they build, boot, drive, and observe EO from
@@ -78,9 +79,10 @@ objects like any other module. List any custom *data* you add in `.packonly`;
 anything left off it that isn't valid Oberon source fails the build with a clear
 error rather than being fed to the compiler.
 
-Internally the headless runtime is one function — [`shim::run`](src/shim.rs) —
-which executes one Oberon command (e.g. `ORP.Compile Foo.Mod/s`) to completion
-against the host filesystem and returns its guest exit code; the shared
+Internally the headless runtime is one function —
+[`risc_core::shim::run`](../risc-core/src/shim.rs) — which executes one Oberon
+command (e.g. `ORP.Compile Foo.Mod/s`) to completion against the host
+filesystem and returns its guest exit code; the shared
 [`pipeline::build`](src/pipeline.rs) pipeline drives it repeatedly to compile the system
 and lay down the disk.
 
@@ -135,8 +137,9 @@ cargo run -p host-tools --release --bin eo-driver -- Oberon.dsk --frames 1000 --
 
 ## eo-inner-run
 
-Boots a directory's `InnerCore` under the headless [`shim`](src/shim.rs) and runs a
-single Oberon command — the bring-up harness for the EO toolchain core, and a handy
+Boots a directory's `InnerCore` under the headless
+[`shim`](../risc-core/src/shim.rs) and runs a single Oberon command — the
+bring-up harness for the EO toolchain core, and a handy
 way to run ad-hoc commands against an inner core (or debug a boot with
 `OBERON_TRACE=1`):
 

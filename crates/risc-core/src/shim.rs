@@ -1,6 +1,11 @@
-//! Headless "shim" runtime: drive the [`Risc`](crate::risc::Risc) CPU from an
-//! inner-core image, mapping Oberon's `Kernel`/`Files`/`FileDir` operations onto
-//! the host filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
+//! Headless "shim" runtime: drive the [`Risc`] CPU from an inner-core image,
+//! mapping Oberon's `Kernel`/`Files`/`FileDir` operations onto the host
+//! filesystem. A Rust port of `project-norebo`'s `Runtime/norebo.c`.
+//!
+//! Unlike `norebo.c`, which trusts the guest, the syscall ABI bounds-checks
+//! everything guest-supplied: out-of-RAM reads yield zeros and writes are
+//! dropped, transfer lengths clamp to RAM, and a file is capped at 1 GiB — so
+//! a corrupt inner core degrades into clean errors instead of host faults.
 //!
 //! This is the CPU's *second* execution mode, the counterpart to the FPGA device
 //! map in [`crate::io`]: rather than disk/display/keyboard devices, the whole MMIO
@@ -28,6 +33,10 @@ const MEM_BYTES: u32 = 8 * 1024 * 1024;
 const STACK_ORG: u32 = 0x0008_0000;
 /// Maximum simultaneously open files (`norebo.c` `MaxFiles`).
 const MAX_FILES: usize = 500;
+/// Cap on a shim file's size. Far above any real artifact (the largest, a full
+/// disk image, is tens of MB), but low enough that a corrupt guest seek/length
+/// can't zero-fill the host's memory.
+const MAX_FILE_BYTES: usize = 1 << 30;
 /// Oberon file-name length (`norebo.c` `NameLength`).
 const NAME_LEN: usize = 32;
 /// A fixed Oberon-encoded date (2024-05-27 12:00:00). File dates are recorded in
@@ -48,16 +57,26 @@ impl<'a> ShimMem<'a> {
         Self { ram }
     }
 
-    /// Read the byte at `adr`.
+    /// Read the byte at `adr`. Out-of-range reads yield 0 — a bad guest pointer
+    /// must not take the host down (`norebo.c` would just fault).
     fn read_byte(&self, adr: u32) -> u8 {
-        (self.ram[(adr / 4) as usize] >> ((adr % 4) * 8)) as u8
+        self.ram
+            .get((adr / 4) as usize)
+            .map_or(0, |w| (w >> ((adr % 4) * 8)) as u8)
     }
 
     /// Write the byte at `adr` (read-modify-write of its containing word).
+    /// Out-of-range writes are dropped.
     fn write_byte(&mut self, adr: u32, value: u8) {
-        let i = (adr / 4) as usize;
         let shift = (adr % 4) * 8;
-        self.ram[i] = (self.ram[i] & !(0xFFu32 << shift)) | (u32::from(value) << shift);
+        if let Some(w) = self.ram.get_mut((adr / 4) as usize) {
+            *w = (*w & !(0xFFu32 << shift)) | (u32::from(value) << shift);
+        }
+    }
+
+    /// Guest RAM size in bytes — the hard bound on any single transfer.
+    fn len_bytes(&self) -> usize {
+        self.ram.len() * 4
     }
 
     /// Copy `buf.len()` bytes from memory starting at `adr` into `buf`.
@@ -341,13 +360,16 @@ impl Host {
     }
 
     fn files_read(&mut self, h: u32, adr: u32, siz: u32, mem: &mut ShimMem) -> u32 {
+        // The destination is guest RAM, so a transfer can't meaningfully exceed
+        // it; clamping keeps a corrupt length from forcing a giant allocation.
+        let siz = (siz as usize).min(mem.len_bytes());
         let Some(f) = self.file_mut(h) else {
             return 0;
         };
         let start = f.pos as usize;
         let avail = f.data.len().saturating_sub(start);
-        let n = (siz as usize).min(avail);
-        let mut buf = vec![0u8; siz as usize]; // tail is zero-filled, as in `norebo.c`
+        let n = siz.min(avail);
+        let mut buf = vec![0u8; siz]; // tail is zero-filled, as in `norebo.c`
         buf[..n].copy_from_slice(&f.data[start..start + n]);
         f.pos += n as u64;
         mem.write_bytes(adr, &buf);
@@ -355,18 +377,27 @@ impl Host {
     }
 
     fn files_write(&mut self, h: u32, adr: u32, siz: u32, mem: &mut ShimMem) -> u32 {
+        let siz = (siz as usize).min(mem.len_bytes()); // the source is guest RAM
         let Some(f) = self.file_mut(h) else {
             return 0;
         };
         let start = f.pos as usize;
-        let end = start + siz as usize;
+        let end = start + siz;
+        if end > MAX_FILE_BYTES {
+            eprintln!(
+                "shim: write to '{}' would exceed the {} MiB file cap",
+                f.name,
+                MAX_FILE_BYTES >> 20
+            );
+            return 0;
+        }
         if f.data.len() < end {
             f.data.resize(end, 0);
         }
         mem.read_bytes(adr, &mut f.data[start..end]);
         f.pos = end as u64;
         f.dirty = true;
-        siz
+        siz as u32
     }
 
     fn files_delete(&mut self, adr: u32, mem: &mut ShimMem) -> u32 {
@@ -651,5 +682,38 @@ mod tests {
         let mut mem = ShimMem::new(&mut ram);
         mem.write_bytes(0, b"Nope.Mod\0");
         assert_eq!(host().files_old(0, &mut mem), u32::MAX);
+    }
+
+    #[test]
+    fn syscalls_survive_wild_guest_pointers_and_lengths() {
+        // A bad pointer or length must not panic the host or balloon its
+        // memory: out-of-range reads yield zeros, writes vanish, transfer
+        // lengths clamp to guest RAM.
+        let mut ram = vec![0u32; 16]; // 64 bytes of guest RAM
+        let mut mem = ShimMem::new(&mut ram);
+        assert_eq!(mem.read_byte(1 << 20), 0);
+        mem.write_byte(1 << 20, 0xAB); // dropped
+
+        let mut h = host();
+        mem.write_bytes(0, b"Scratch\0");
+        let fd = h.files_new(0, &mut mem);
+        assert_ne!(fd, u32::MAX);
+        // A huge read length clamps to RAM; the file is empty, so 0 bytes read.
+        assert_eq!(h.files_read(fd, 0, u32::MAX, &mut mem), 0);
+        // A name pointer outside RAM reads as all-NUL -> the empty (valid) name.
+        assert_eq!(read_name(&mem, 1 << 20).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn files_write_past_the_size_cap_is_refused() {
+        let mut ram = vec![0u32; 64];
+        let mut mem = ShimMem::new(&mut ram);
+        mem.write_bytes(0, b"Scratch\0");
+        let mut h = host();
+        let fd = h.files_new(0, &mut mem);
+        // Seek to ~2 GiB and write: refused outright, not a 2 GiB zero-fill.
+        h.files_seek(fd, i32::MAX as u32, 0); // whence 0 = SET
+        assert_eq!(h.files_write(fd, 0, 4, &mut mem), 0);
+        assert_eq!(h.file_mut(fd).unwrap().data.len(), 0, "file must not grow");
     }
 }

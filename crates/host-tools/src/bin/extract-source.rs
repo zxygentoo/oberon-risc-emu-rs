@@ -9,8 +9,8 @@
 //! `X.rsc` object, and every other extracted file (data, plus reference modules
 //! that ship as source with no object) is recorded as pack-only.
 //!
-//! It reads the Oberon on-disk filesystem directly (see [`image`]); no emulator, no
-//! boot. Usage: `extract-source <DISK_IMAGE> <OUTPUT_DIR>`.
+//! It reads the Oberon on-disk filesystem directly (see [`host_tools::image`]); no
+//! emulator, no boot. Usage: `extract-source <DISK_IMAGE> <OUTPUT_DIR>`.
 //!
 //! By default the compiled artifacts are skipped; pass `--keep-objects` to also
 //! extract them, to harvest a compiler/toolchain *seed* from a prebuilt image
@@ -145,7 +145,8 @@ fn run(cli: &Cli) -> io::Result<()> {
 }
 
 /// Write one extracted file into `dir`. Rejects any name that doesn't resolve to
-/// a direct child of `dir` — defense in depth on top of [`image`]'s name validation.
+/// a direct child of `dir` — defense in depth on top of [`host_tools::image`]'s
+/// name validation.
 fn write_file(dir: &Path, name: &str, data: &[u8]) -> io::Result<()> {
     let path = dir.join(name);
     if path.parent() != Some(dir) {

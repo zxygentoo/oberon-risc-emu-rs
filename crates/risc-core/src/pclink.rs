@@ -7,7 +7,7 @@
 //! but allow a base directory to be set, which makes the protocol testable.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::io::Serial;
@@ -16,10 +16,18 @@ const ACK: u32 = 0x10;
 const REC: u32 = 0x21;
 const SND: u32 = 0x22;
 
+/// The open host file behind the current job. REC pulls the payload one byte
+/// per MMIO read, so it goes through a `BufReader` (the C reads via a buffered
+/// `fgetc`); SND writes whole blocks, so a plain `File` suffices.
+enum JobFile {
+    Rec(BufReader<File>),
+    Snd(File),
+}
+
 pub struct PcLink {
     dir: PathBuf,
     mode: u32, // 0 (idle), REC, or SND
-    file: Option<File>,
+    file: Option<JobFile>,
     txcount: i32,
     rxcount: i32,
     fnlen: i32,
@@ -99,7 +107,7 @@ impl Serial for PcLink {
                         if let Ok(f) = File::open(self.target()) {
                             self.flen = meta.len() as i64;
                             self.mode = REC;
-                            self.file = Some(f);
+                            self.file = Some(JobFile::Rec(BufReader::new(f)));
                             println!("PCLink REC Filename: {} size {}", self.filename, self.flen);
                         }
                     }
@@ -118,7 +126,7 @@ impl Serial for PcLink {
                 {
                     self.flen = -1;
                     self.mode = SND;
-                    self.file = Some(f);
+                    self.file = Some(JobFile::Snd(f));
                     println!("PCLink SND Filename: {}", self.filename);
                 }
                 if self.mode == 0 {
@@ -160,7 +168,7 @@ impl Serial for PcLink {
                     }
                 } else {
                     let mut b = [0u8; 1];
-                    if let Some(f) = self.file.as_mut() {
+                    if let Some(JobFile::Rec(f)) = self.file.as_mut() {
                         let _ = f.read(&mut b);
                     }
                     ch = b[0] as u32;
@@ -191,7 +199,7 @@ impl Serial for PcLink {
                 self.buf[pos] = value as u8;
                 let lim = self.buf[0] as usize;
                 if pos == lim {
-                    if let Some(f) = self.file.as_mut() {
+                    if let Some(JobFile::Snd(f)) = self.file.as_mut() {
                         let _ = f.write_all(&self.buf[1..=lim]);
                     }
                     if lim < 255 {
@@ -266,6 +274,40 @@ mod tests {
         assert_eq!(&got, b"Hello, Oberon!");
         assert_eq!(pc.read_data(), 0); // end of file
         assert_eq!(pc.read_status(), 2); // transfer done, idle again
+    }
+
+    #[test]
+    fn rec_streams_a_multi_block_file() {
+        // 600 bytes arrive as length-prefixed blocks (255, 255, 90, then a 0
+        // terminator), exercising the buffered read path across block seams.
+        let s = Scratch::new();
+        let payload: Vec<u8> = (0..600u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(s.dir.join("big.bin"), &payload).unwrap();
+        std::fs::write(s.dir.join("PCLink.REC"), "big.bin").unwrap();
+
+        let mut pc = PcLink::in_dir(&s.dir);
+        assert_eq!(pc.read_status(), 3); // REC active
+        assert_eq!(pc.read_data(), REC);
+        pc.write_data(ACK);
+        for _ in 0..="big.bin".len() {
+            pc.read_data(); // filename + NUL
+        }
+
+        let mut lengths = Vec::new();
+        let mut got = Vec::new();
+        loop {
+            let len = pc.read_data();
+            lengths.push(len);
+            if len == 0 {
+                break;
+            }
+            for _ in 0..len {
+                got.push(pc.read_data() as u8);
+            }
+        }
+        assert_eq!(lengths, [255, 255, 90, 0]);
+        assert_eq!(got, payload);
+        assert_eq!(pc.read_status(), 2); // idle again
     }
 
     #[test]

@@ -86,9 +86,7 @@ impl Image {
         let base = [0, SD_FS_OFFSET]
             .into_iter()
             .find(|&b| has_dir_mark(&data, b))
-            .ok_or_else(|| {
-                bad("not an Oberon filesystem image (no directory mark at sector 1)")
-            })?;
+            .ok_or_else(|| bad("not an Oberon filesystem image (no directory mark at sector 1)"))?;
         Ok(Image { data, base })
     }
 
